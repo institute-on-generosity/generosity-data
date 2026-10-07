@@ -8,6 +8,7 @@ Tags (namespace-agnostic, so schema versions don't matter):
          programs = IRS990/Desc (Part III 4a) + ProgSrvcAccomActy{2,3,Other}Grp/Desc
   990-EZ mission  = PrimaryExemptPurposeTxt
          programs = ProgramSrvcAccomplishmentGrp/DescriptionProgramSrvcAccomTxt
+  990    employees = TotalEmployeeCnt (Part I line 5), volunteers = TotalVolunteersCnt (line 6); not on 990-EZ
 """
 import csv, io, os, subprocess, sys, xml.etree.ElementTree as ET
 
@@ -42,7 +43,9 @@ def parse(path):
         progs = [text(e) for e in find(f, "Desc")]
         for g in ("ProgSrvcAccomActy2Grp", "ProgSrvcAccomActy3Grp", "ProgSrvcAccomActyOtherGrp"):
             progs += [text(e) for e in find(f, g + "/Desc")]
+        staff, vols = (text((find(f, t) or [None])[0]) for t in ("TotalEmployeeCnt", "TotalVolunteersCnt"))
     elif form == "990EZ":
+        staff = vols = ""
         f = (find(data, "IRS990EZ") or [None])[0]
         if f is None: return None
         mission = text((find(f, "PrimaryExemptPurposeTxt") or [None])[0])
@@ -53,7 +56,8 @@ def parse(path):
     if not (mission or programs):
         return None
     oid = os.path.basename(path).split("_")[0]
-    return [oid, ein, year or "", form, mission[:MAX], programs[:MAX]]
+    count = lambda v: v if v.isdigit() else ""
+    return [oid, ein, year or "", form, mission[:MAX], programs[:MAX], count(staff), count(vols)]
 
 def main():
     out = io.StringIO(); w = csv.writer(out, lineterminator="\n")
@@ -67,12 +71,13 @@ def main():
         if row: w.writerow(row); ok += 1
         else: empty += 1
     print(f"parsed: {ok} with text, {empty} without text, {bad} unparseable")
-    script = """CREATE TEMP TABLE ft_raw (object_id text, ein text, tax_year int, form text, mission text, programs text);
+    script = """CREATE TEMP TABLE ft_raw (object_id text, ein text, tax_year int, form text, mission text, programs text, employees int, volunteers int);
 \\copy ft_raw FROM STDIN WITH (FORMAT csv, NULL '')
 """ + out.getvalue() + """\\.
-INSERT INTO filing_text (object_id, ein, tax_year, form, mission, programs)
-SELECT object_id, ein, tax_year, form, nullif(mission, ''), nullif(programs, '') FROM ft_raw
-ON CONFLICT (object_id) DO UPDATE SET mission = EXCLUDED.mission, programs = EXCLUDED.programs;
+INSERT INTO filing_text (object_id, ein, tax_year, form, mission, programs, employees, volunteers)
+SELECT object_id, ein, tax_year, form, nullif(mission, ''), nullif(programs, ''), employees, volunteers FROM ft_raw
+ON CONFLICT (object_id) DO UPDATE SET mission = EXCLUDED.mission, programs = EXCLUDED.programs,
+  employees = EXCLUDED.employees, volunteers = EXCLUDED.volunteers;
 SELECT count(*) FROM filing_text;
 """
     p = subprocess.run(["psql", DB, "-v", "ON_ERROR_STOP=1", "-qAt"], input=script, text=True, capture_output=True)
