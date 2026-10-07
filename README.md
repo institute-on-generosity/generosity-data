@@ -11,7 +11,13 @@ createdb nombot
 db/migrate.sh                     # apply db/migrations/*.sql once each
 etl/load_bmf.sh                   # IRS BMF for WV, KY, TN, VA, OH (~205K orgs, ~10s)
 STATES="ca ny" etl/load_bmf.sh    # any other states; safe to re-run (upsert)
+python3 etl/load_soi.py 24        # SOI 2024 financials for loaded orgs (~8s)
+etl/fetch_990_xml.sh              # 2025 XML batches 05A + 11B (~1 GB download), extract matching filings
+python3 etl/load_990_text.py      # mission + program text into filing_text (~8s)
+cd embed && npm install && node embed.mjs   # 512-dim embeddings; local fallback if no OPENAI_API_KEY
 ```
+
+No Python packages needed (stdlib + `psql`). Embeddings run in Node because they share code with the NomBot app's query embedder.
 
 Set `DATABASE_URL` to target another database (e.g. Supabase after migration). Defaults to `postgresql:///nombot`.
 
@@ -20,12 +26,17 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 | Table | Source | Contents |
 |---|---|---|
 | `orgs` | [IRS EO BMF](https://www.irs.gov/charities-non-profits/exempt-organizations-business-master-file-extract-eo-bmf) | One row per exempt org; terminating orgs (status 25) skipped; keyword index on name + city |
-| `financials` | [IRS SOI extract](https://www.irs.gov/statistics/soi-tax-stats-annual-extract-of-tax-exempt-organization-financial-data) | Revenue, expenses, assets by tax year *(loader: next)* |
-| `filing_text` | [IRS 990 e-file XML](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Mission + program text and 512-dim embeddings *(loader: next)* |
+| `financials` | [IRS SOI extract](https://www.irs.gov/statistics/soi-tax-stats-annual-extract-of-tax-exempt-organization-financial-data) | Revenue, expenses, assets by tax year and form (990, 990-EZ) |
+| `filing_text` | [IRS 990 e-file XML](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Mission + program text, 512-dim embedding, and the `embedding_model` that produced it |
 
 ## Status
 - [x] Schema + migration runner
-- [x] BMF loader (5 Appalachian states loaded: 204,564 orgs)
-- [ ] SOI financials loader
-- [ ] 990 XML text extraction
-- [ ] Embeddings
+- [x] BMF loader (5 Appalachian states: 204,564 orgs)
+- [x] SOI financials loader (2024 extract: 54,590 rows)
+- [x] 990 XML text extraction (2025 batches 05A + 11B: 12,354 filings)
+- [x] Embedding job + HNSW index (local fallback model until an OpenAI key is provided)
+
+## Gotchas
+- 990 XML batches use **Deflate64**: Python's `zipfile` can't read them; `unzip` can.
+- The IRS index lists some filings under the wrong batch (6,219 of 05A's were absent); they're skipped.
+- Local-fallback and OpenAI vectors are not comparable; `embedding_model` lets a provider switch re-embed only stale rows.
