@@ -12,6 +12,7 @@ db/migrate.sh                     # apply db/migrations/*.sql once each
 etl/load_bmf.sh                   # IRS BMF for WV, KY, TN, VA, OH (~205K orgs, ~10s)
 STATES="ca ny" etl/load_bmf.sh    # any other states; safe to re-run (upsert)
 python3 etl/load_soi.py 24        # SOI 2024 financials for loaded orgs (~8s)
+python3 etl/load_regions.py       # ZIP -> county + Appalachia (ARC) flag (~6s)
 etl/fetch_990_xml.sh              # 2025 XML batches 05A + 11B (~1 GB download), extract matching filings
 python3 etl/load_990_text.py      # mission + program text into filing_text (~8s)
 cd embed && npm install && node embed.mjs   # 512-dim embeddings; local fallback if no OPENAI_API_KEY
@@ -28,6 +29,7 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 | `orgs` | [IRS EO BMF](https://www.irs.gov/charities-non-profits/exempt-organizations-business-master-file-extract-eo-bmf) | One row per exempt org; terminating orgs (status 25) skipped; keyword index on name + city |
 | `financials` | [IRS SOI extract](https://www.irs.gov/statistics/soi-tax-stats-annual-extract-of-tax-exempt-organization-financial-data) | Revenue, expenses, assets by tax year and form (990, 990-EZ) |
 | `filing_text` | [IRS 990 e-file XML](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Mission + program text, 512-dim embedding, and the `embedding_model` that produced it |
+| `zip_regions` | [Census ZCTA-county](https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/) + [ARC counties](https://en.wikipedia.org/wiki/List_of_Appalachian_Regional_Commission_counties) | ZIP → county (largest land share; PO-box ZIPs from same-city orgs) and whether it's in Appalachia |
 | `soi_fields` | [IRS SOI field dictionary](https://www.irs.gov/pub/irs-soi/24eofinextractdoc.xlsx) | Description, form location and code meanings for every SOI extract column; `financials.raw` keeps each record's non-empty fields |
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
 
