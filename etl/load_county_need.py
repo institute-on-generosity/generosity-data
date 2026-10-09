@@ -3,10 +3,12 @@
 
 Downloads (no API key needed) into data/census/:
   SAIPE 2023 state and county estimates, fixed width (layout: 2023-estimate-layout.txt)
-    cols 1-2 state FIPS, 4-6 county FIPS, 35-38 % all ages in poverty, 77-80 % age 0-17 in poverty,
+    cols 1-2 state FIPS, 4-6 county FIPS, 8-15 people in poverty, 35-38 % all ages in poverty (40-43 / 45-48:
+    90% confidence bounds), 77-80 % age 0-17 in poverty,
     134-139 median household income, 194-238 name, 240-241 state abbreviation
   Population estimates 2020-2024, county totals CSV (POPESTIMATE2024)
-All US counties are loaded (about 3,100); the app joins them to orgs through zip_regions.county_fips.
+All US counties are loaded (about 3,100) plus the national row as county_fips '00000' (state 'US');
+the app joins counties to orgs through zip_regions.county_fips.
 """
 import csv, io, os, subprocess, sys, urllib.request
 
@@ -42,18 +44,22 @@ def main():
         for line in f:
             if len(line) < 241: continue
             st, co = line[0:2].strip(), line[3:6].strip()
-            if not st.isdigit() or not co.isdigit() or int(co) == 0: continue  # skip US and state rows
+            if not st.isdigit() or not co.isdigit(): continue
+            if int(co) == 0 and int(st) != 0: continue  # state rows; keep the US row (00 0) as '00000'
             fips = st.zfill(2) + co.zfill(3)
-            w.writerow([fips, line[193:238].strip(), line[239:241].strip(), pop.get(fips, ""), num(line[34:38]), num(line[76:80]), num(line[133:139]), SAIPE[2], POP[2] if fips in pop else ""])
+            name, abbr = (line[193:238].strip(), line[239:241].strip()) if int(st) else ("United States", "US")
+            w.writerow([fips, name, abbr, pop.get(fips, ""), num(line[34:38]), num(line[76:80]), num(line[133:139]), SAIPE[2], POP[2] if fips in pop else "",
+                        num(line[7:15]), num(line[39:43]), num(line[44:48])])
             n += 1
     print(f"parsed: {n} counties ({sum(1 for k in pop)} with population)")
     script = """CREATE TEMP TABLE cn_raw (LIKE county_need);
-\\copy cn_raw (county_fips, name, state, population, poverty_rate, child_poverty_rate, median_income, poverty_year, population_year) FROM STDIN WITH (FORMAT csv, NULL '')
+\\copy cn_raw (county_fips, name, state, population, poverty_rate, child_poverty_rate, median_income, poverty_year, population_year, people_in_poverty, poverty_low, poverty_high) FROM STDIN WITH (FORMAT csv, NULL '')
 """ + out.getvalue() + """\\.
 INSERT INTO county_need SELECT * FROM cn_raw
 ON CONFLICT (county_fips) DO UPDATE SET name = EXCLUDED.name, state = EXCLUDED.state, population = EXCLUDED.population,
   poverty_rate = EXCLUDED.poverty_rate, child_poverty_rate = EXCLUDED.child_poverty_rate, median_income = EXCLUDED.median_income,
-  poverty_year = EXCLUDED.poverty_year, population_year = EXCLUDED.population_year;
+  poverty_year = EXCLUDED.poverty_year, population_year = EXCLUDED.population_year,
+  people_in_poverty = EXCLUDED.people_in_poverty, poverty_low = EXCLUDED.poverty_low, poverty_high = EXCLUDED.poverty_high;
 SELECT count(*) FROM county_need;
 """
     p = subprocess.run(["psql", DB, "-v", "ON_ERROR_STOP=1", "-qAt"], input=script, text=True, capture_output=True)
