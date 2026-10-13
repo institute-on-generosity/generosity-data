@@ -18,8 +18,9 @@ python3 etl/load_990_text.py      # mission + program text into filing_text (~8s
 python3 etl/load_990_flag.py      # FLAG diligence fields into filing_flag (~1 min)
 python3 etl/load_county_need.py   # county poverty, income, population (Census SAIPE + estimates; no API key, ~5s)
 cd embed && npm install && node embed.mjs   # 512-dim embeddings; local fallback if no OPENAI_API_KEY
-TYPES=990PF BATCHES="01A 02A 03A 04A 05A 06A 07A 08A 09A 10A 11A 11B 11C 11D 12A" etl/fetch_990_xml.sh  # foundations' 990-PFs
-python3 etl/load_grants.py        # GrantRadar: funders + grants (Part XV), recipients linked to orgs (~3.5 min)
+for y in 2025 2024 2023; do YEAR=$y TYPES=990PF etl/fetch_990_xml.sh; done  # every US foundation's 990-PF, 3 years (~13 GB of zips)
+python3 etl/load_grants.py        # GrantRadar: funders + grants (Part XV), recipients linked to orgs (~25 min)
+python3 etl/load_grants.py --match-only   # relink recipients only (e.g. after loading more states; ~13 min)
 ```
 
 No Python packages needed (stdlib + `psql`). Embeddings run in Node because they share code with the NomBot app's query embedder.
@@ -37,8 +38,8 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 | `county_need` | [Census SAIPE 2023](https://www.census.gov/programs-surveys/saipe.html) + [population estimates 2024](https://www.census.gov/programs-surveys/popest.html) | Per county (FIPS, joins `zip_regions.county_fips`): poverty rate (all ages, children) with its 90% range and people in poverty, median household income, population. 3,144 counties, plus the U.S. as `00000` |
 | `zip_regions` | [Census ZCTA-county](https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/) + [ARC counties](https://en.wikipedia.org/wiki/List_of_Appalachian_Regional_Commission_counties) | ZIP → county (largest land share; PO-box ZIPs from same-city orgs) and whether it's in Appalachia |
 | `soi_fields` | [IRS SOI field dictionary](https://www.irs.gov/pub/irs-soi/24eofinextractdoc.xlsx) | Description, form location and code meanings for every SOI extract column; `financials.raw` keeps each record's non-empty fields |
-| `funders` | IRS 990-PF e-file XML | One row per private foundation (latest return): assets, grants paid, invitation-only flag, how to apply (Part XV 2a–d) |
-| `grants` | IRS 990-PF Part XV 3a | Each grant paid: recipient name/address, amount, purpose; `recipient_ein` links to `orgs` with `match_score` + `match_method` (exact, exact-city, fuzzy) |
+| `funders` | IRS 990-PF e-file XML | One row per private foundation in the US (newest return): assets, grants paid, invitation-only flag, how to apply (Part XV 2a–d). Donation pass-throughs (50,000+ grants on one return, e.g. AmazonSmile) are skipped |
+| `grants` | IRS 990-PF Part XV 3a | Each grant paid, every loaded year: recipient name/address, amount, purpose, `tax_year`, `object_id` of its return (one return per foundation per year, the newest filed); `recipient_ein` links to `orgs` with `match_score` + `match_method` (exact, exact-city, fuzzy) |
 | `giving_circles` (view) | IRS master file + SOI | Giving circles that are their own nonprofit, found by name: Impact 100, 100 Who Care, women's funds (only those paying $10K+ in grants), "giving circle"; grants paid (990 Part IX line 1), website. 15 in the 5 states. Hosted circles don't file, so they're missing |
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
 
@@ -54,8 +55,10 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 - [x] Org websites from the 990 header (migration 012: 28,843 filings)
 - [x] Giving circles view (migration 013: 15 circles in 5 states)
 - [x] GrantRadar grants (2025 990-PFs: 8,030 foundations, 102,725 grants; 51% of in-state grants linked to a recipient)
+- [x] Every US foundation, 3 IRS years (migration 014: 2023–2025 990-PFs, 135,407 foundations, 4.84M grants, tax years mostly 2022–2024; 56% of grants into the 5 states linked; 24,510 foundations fund a linked org there)
 
 ## Gotchas
 - 990 XML batches use **Deflate64**: Python's `zipfile` can't read them; `unzip` can.
-- The IRS index lists some filings under the wrong batch (6,219 of 05A's were absent); they're skipped.
+- The IRS index lists some filings under the wrong batch, and some zips are cut short (2025 05A lists 81,770 files); the fetch script matches each zip's own file list to the index, so only filings missing from every zip are skipped. 2023's index names no batches.
+- Matching recipients normalizes each name once (`gs`) and writes links back by grant id; recomputing names inside the final update took hours on 5M grants.
 - Local-fallback and OpenAI vectors are not comparable; `embedding_model` lets a provider switch re-embed only stale rows.
