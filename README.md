@@ -32,13 +32,14 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 |---|---|---|
 | `orgs` | [IRS EO BMF](https://www.irs.gov/charities-non-profits/exempt-organizations-business-master-file-extract-eo-bmf) | One row per exempt org; terminating orgs (status 25) skipped; keyword index on name + city |
 | `financials` | [IRS SOI extract](https://www.irs.gov/statistics/soi-tax-stats-annual-extract-of-tax-exempt-organization-financial-data) | Revenue, expenses, assets by tax year and form (990, 990-EZ) |
-| `filing_text` | [IRS 990 e-file XML](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Mission + program text, staff + volunteer counts (990 Part I lines 5–6; not on 990-EZ), 512-dim embedding, and the `embedding_model` that produced it |
+| `filing_text` | [IRS 990 e-file XML](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Mission + program text, staff + volunteer counts (990 Part I lines 5–6; not on 990-EZ), website (header; placeholders dropped; 28,843 filings), 512-dim embedding, and the `embedding_model` that produced it |
 | `filing_flag` | IRS 990 e-file XML | FLAG diligence per filing: this year vs prior year (Part I), cash, assets, liabilities, net assets (Part X), program/management/fundraising spending (Part IX), board size and independence, audit and policies (Part VI), insider flags (Part IV), officers, directors and key employees with pay (Part VII; 990-EZ Part IV). 50,971 filings |
 | `county_need` | [Census SAIPE 2023](https://www.census.gov/programs-surveys/saipe.html) + [population estimates 2024](https://www.census.gov/programs-surveys/popest.html) | Per county (FIPS, joins `zip_regions.county_fips`): poverty rate (all ages, children) with its 90% range and people in poverty, median household income, population. 3,144 counties, plus the U.S. as `00000` |
 | `zip_regions` | [Census ZCTA-county](https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/) + [ARC counties](https://en.wikipedia.org/wiki/List_of_Appalachian_Regional_Commission_counties) | ZIP → county (largest land share; PO-box ZIPs from same-city orgs) and whether it's in Appalachia |
 | `soi_fields` | [IRS SOI field dictionary](https://www.irs.gov/pub/irs-soi/24eofinextractdoc.xlsx) | Description, form location and code meanings for every SOI extract column; `financials.raw` keeps each record's non-empty fields |
 | `funders` | IRS 990-PF e-file XML | One row per private foundation (latest return): assets, grants paid, invitation-only flag, how to apply (Part XV 2a–d) |
 | `grants` | IRS 990-PF Part XV 3a | Each grant paid: recipient name/address, amount, purpose; `recipient_ein` links to `orgs` with `match_score` + `match_method` (exact, exact-city, fuzzy) |
+| `giving_circles` (view) | IRS master file + SOI | Giving circles that are their own nonprofit, found by name: Impact 100, 100 Who Care, women's funds (only those paying $10K+ in grants), "giving circle"; grants paid (990 Part IX line 1), website. 15 in the 5 states. Hosted circles don't file, so they're missing |
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
 
 ## Status
@@ -50,6 +51,8 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 - [x] County need from the Census (migrations 010–011: 3,144 counties + U.S.)
 - [x] Embedding job + HNSW index (local fallback model until an OpenAI key is provided)
 - [x] ZIP → county + Appalachia lookup (34,236 ZIPs)
+- [x] Org websites from the 990 header (migration 012: 28,843 filings)
+- [x] Giving circles view (migration 013: 15 circles in 5 states)
 - [x] GrantRadar grants (2025 990-PFs: 8,030 foundations, 102,725 grants; 51% of in-state grants linked to a recipient)
 
 ## Gotchas

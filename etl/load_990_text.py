@@ -9,8 +9,9 @@ Tags (namespace-agnostic, so schema versions don't matter):
   990-EZ mission  = PrimaryExemptPurposeTxt
          programs = ProgramSrvcAccomplishmentGrp/DescriptionProgramSrvcAccomTxt
   990    employees = TotalEmployeeCnt (Part I line 5), volunteers = TotalVolunteersCnt (line 6); not on 990-EZ
+  both   website = WebsiteAddressTxt (header item J / EZ item I), cleaned by site()
 """
-import csv, io, os, subprocess, sys, xml.etree.ElementTree as ET
+import csv, io, os, re, subprocess, sys, xml.etree.ElementTree as ET
 
 DB = os.environ.get("DATABASE_URL", "postgresql:///nombot")
 SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "data", "xml", "2025")
@@ -29,6 +30,14 @@ def find(root, path):
         nodes = [c for n in nodes for c in n if local(c.tag) == part]
     return nodes
 
+def site(raw):
+    """'WWW.Example.ORG/' -> 'www.example.org', 'http://example.org' -> 'example.org'; placeholders, emails and junk -> ''."""
+    s = raw.strip().lower().rstrip("/.")
+    s = re.sub(r"^(https?:?/*)", "", s)
+    if not s or " " in s or "@" in s or "." not in s or re.fullmatch(r"(n/?a|none|na|0|no website|not applicable)", s):
+        return ""
+    return s if re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+(/[^\s]*)?", s) else ""
+
 def parse(path):
     root = ET.parse(path).getroot()
     hdr = find(root, "ReturnHeader")[0]
@@ -44,12 +53,14 @@ def parse(path):
         for g in ("ProgSrvcAccomActy2Grp", "ProgSrvcAccomActy3Grp", "ProgSrvcAccomActyOtherGrp"):
             progs += [text(e) for e in find(f, g + "/Desc")]
         staff, vols = (text((find(f, t) or [None])[0]) for t in ("TotalEmployeeCnt", "TotalVolunteersCnt"))
+        web = site(text((find(f, "WebsiteAddressTxt") or [None])[0]))
     elif form == "990EZ":
         staff = vols = ""
         f = (find(data, "IRS990EZ") or [None])[0]
         if f is None: return None
         mission = text((find(f, "PrimaryExemptPurposeTxt") or [None])[0])
         progs = [text(e) for e in find(f, "ProgramSrvcAccomplishmentGrp/DescriptionProgramSrvcAccomTxt")]
+        web = site(text((find(f, "WebsiteAddressTxt") or [None])[0]))
     else:
         return None
     programs = " | ".join(dict.fromkeys(p for p in progs if p))  # dedupe, keep order
@@ -57,7 +68,7 @@ def parse(path):
         return None
     oid = os.path.basename(path).split("_")[0]
     count = lambda v: v if v.isdigit() else ""
-    return [oid, ein, year or "", form, mission[:MAX], programs[:MAX], count(staff), count(vols)]
+    return [oid, ein, year or "", form, mission[:MAX], programs[:MAX], count(staff), count(vols), web]
 
 def main():
     out = io.StringIO(); w = csv.writer(out, lineterminator="\n")
@@ -71,13 +82,13 @@ def main():
         if row: w.writerow(row); ok += 1
         else: empty += 1
     print(f"parsed: {ok} with text, {empty} without text, {bad} unparseable")
-    script = """CREATE TEMP TABLE ft_raw (object_id text, ein text, tax_year int, form text, mission text, programs text, employees int, volunteers int);
+    script = """CREATE TEMP TABLE ft_raw (object_id text, ein text, tax_year int, form text, mission text, programs text, employees int, volunteers int, website text);
 \\copy ft_raw FROM STDIN WITH (FORMAT csv, NULL '')
 """ + out.getvalue() + """\\.
-INSERT INTO filing_text (object_id, ein, tax_year, form, mission, programs, employees, volunteers)
-SELECT object_id, ein, tax_year, form, nullif(mission, ''), nullif(programs, ''), employees, volunteers FROM ft_raw
+INSERT INTO filing_text (object_id, ein, tax_year, form, mission, programs, employees, volunteers, website)
+SELECT object_id, ein, tax_year, form, nullif(mission, ''), nullif(programs, ''), employees, volunteers, nullif(website, '') FROM ft_raw
 ON CONFLICT (object_id) DO UPDATE SET mission = EXCLUDED.mission, programs = EXCLUDED.programs,
-  employees = EXCLUDED.employees, volunteers = EXCLUDED.volunteers;
+  employees = EXCLUDED.employees, volunteers = EXCLUDED.volunteers, website = EXCLUDED.website;
 SELECT count(*) FROM filing_text;
 """
     p = subprocess.run(["psql", DB, "-v", "ON_ERROR_STOP=1", "-qAt"], input=script, text=True, capture_output=True)
