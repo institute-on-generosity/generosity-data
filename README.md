@@ -25,10 +25,13 @@ cd embed && npm install && node embed.mjs   # 512-dim embeddings; local fallback
 for y in 2025 2024 2023; do YEAR=$y TYPES=990PF etl/fetch_990_xml.sh; done  # every US foundation's 990-PF, 3 years (~13 GB of zips)
 python3 etl/load_grants.py        # GrantRadar: funders + grants (Part XV), recipients linked to orgs (~25 min)
 python3 etl/load_grants.py --match-only   # relink recipients only (e.g. after loading more states; national ~1.5 h on 8 workers)
-psql nombot -f db/refresh.sql      # rebuild the newest-record views + vector index after any load (~3 min)
+python3 etl/load_board.py         # board members (990 Part VII, 990-PF officers) + board interlocks (~15 min)
+psql nombot -f db/refresh.sql      # rebuild the newest-record views, vector index, interlocks after any load (~5 min)
 ```
 
-No Python packages needed (stdlib + `psql`), except the optional GPU embedder (`.venv`: torch, sentence-transformers). Embeddings run in Node because they share code with the NomBot app's query embedder.
+No Python packages needed (stdlib + `psql`), except the optional GPU embedder (`.venv`: torch, sentence-transformers) and the analytics tools (`.venv-analytics`: Splink, igraph, BERTopic, DuckDB, dbt).
+
+Claude Code reads the database through a read-only login: `nombot_reader` (read-only transactions, 60 s timeout) behind the `nombot-db` MCP server (`claude mcp add nombot-db -s user -- npx -y @modelcontextprotocol/server-postgres postgresql://nombot_reader@localhost/nombot`). Embeddings run in Node because they share code with the NomBot app's query embedder.
 
 Set `DATABASE_URL` to target another database (e.g. Supabase after migration). Defaults to `postgresql:///nombot`.
 
@@ -45,6 +48,8 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 | `soi_fields` | [IRS SOI field dictionary](https://www.irs.gov/pub/irs-soi/24eofinextractdoc.xlsx) | Description, form location and code meanings for every SOI extract column; `financials.raw` keeps each record's non-empty fields |
 | `funders` | IRS 990-PF e-file XML | One row per private foundation in the US (newest return): assets, grants paid, invitation-only flag, how to apply (Part XV 2a–d). Donation pass-throughs (50,000+ grants on one return, e.g. AmazonSmile) are skipped |
 | `grants` | IRS 990-PF Part XV 3a | Each grant paid, every loaded year: recipient name/address, amount, purpose, `tax_year`, `object_id` of its return (one return per foundation per year, the newest filed); `recipient_ein` links to `orgs` with `match_score` + `match_method` (exact, exact-city, fuzzy) |
+| `board_members` | 990 Part VII, 990-PF officers | One row per person per org (each org's newest return): name, `person_key` (first + last), title, hours, pay; state on 990-PF |
+| `board_interlocks` (view) | `board_members` + `grants` | Same-state org pairs sharing board members: `kind` (funder-grantee, funder-funder, funder-nonprofit, nonprofit-nonprofit), `relation` (link, sister, bank-trust), `confidence`, shared people, grants paid between them |
 | `giving_circles` (view) | IRS master file + SOI | Giving circles that are their own nonprofit, found by name: Impact 100, 100 Who Care, women's funds (only those paying $10K+ in grants), "giving circle"; grants paid (990 Part IX line 1), website. 145 in 38 states. Hosted circles don't file, so they're missing |
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
 
@@ -63,6 +68,8 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 - [x] Every US foundation, 3 IRS years (migration 014: 2023–2025 990-PFs, 135,407 foundations, 4.84M grants, tax years mostly 2022–2024; 56% of grants into the 5 states linked; 24,510 foundations fund a linked org there)
 - [x] **Every US nonprofit (Oct 13)**: 1,972,852 orgs, 538,346 SOI rows, 513,813 filings (text, FLAG fields, websites), all re-embedded at full precision on the GPU; 57% of 4.84M grants linked (82,671 foundations fund a linked org)
 - [x] Newest-record views + vector index on them (migration 015, `db/refresh.sql`); `btree_gin` for state-scoped fuzzy matching (016); funder × purpose sums for grant types (017)
+- [x] **IRS 2026 batches (Oct 14)**: 785,772 filings for 541,879 orgs (452,462 websites); 138,734 foundations, 5,348,919 grants over 4 IRS years (tax years mostly 2022–2025, $392B); 56% linked (85,127 foundations fund a linked org; 49% of linked grants stay in the funder's state)
+- [x] **Board interlocks (migration 018, `etl/load_board.py`)**: 4,859,408 board seats at 679,042 orgs; 977,088 same-state org pairs sharing a board member: 858,688 hidden links (45,116 high confidence), the rest sister orgs or bank trusts; 13,164 pairs where a foundation pays an org it shares board members with (9,213 hidden)
 
 ## Gotchas
 - 990 XML batches use **Deflate64**: Python's `zipfile` can't read them; `unzip` can.
@@ -72,4 +79,5 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 - The 8-bit (q8) nomic model scored only ~0.975 cosine against full precision, so the local model id is `local:nomic-embed-text-v1.5-fp32@512` and queries must use full precision too.
 - `embed_gpu.py` runs out of GPU memory on the longest texts late in a run; it saves every 4,096 rows, so just rerun it (it skips finished rows).
 - Fuzzy matching nationally: one session took days (each lookup searched all 2M orgs). A `(state, trigrams)` GIN index (`btree_gin`) and 8 workers on name hashes brought it to ~1.5 h.
+- Board interlocks match people by first + last name within a state (`person_key()`), skipping names on more than 8 boards there; one shared name alone is low confidence. Nonprofit boards come from `filing_flag.people`, which keeps the 25 best-paid people per filing, so very large boards are cut short.
 - `db/refresh.sql` uses a plain refresh with 4 GB `maintenance_work_mem`: CONCURRENTLY rewrote the vector index row by row and ran 40+ min without finishing; plain took 2.5 min.

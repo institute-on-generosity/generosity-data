@@ -10,3 +10,5 @@ REFRESH MATERIALIZED VIEW filing_latest;
 REFRESH MATERIALIZED VIEW financials_latest;
 REFRESH MATERIALIZED VIEW flag_latest;
 REFRESH MATERIALIZED VIEW funder_purposes;
+-- After grants are relinked: board links marked funder-grantee need grants.recipient_ein (migration 018)
+REFRESH MATERIALIZED VIEW board_interlocks;
