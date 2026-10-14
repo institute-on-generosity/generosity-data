@@ -2,13 +2,303 @@
 
 Shared IRS nonprofit data pipeline and Postgres + pgvector schema for [NomBot](https://github.com/institute-on-generosity/NomBot) and [GrantRadar](https://github.com/institute-on-generosity/GrantRadar).
 
-**Brief:** [`docs/shared-database-brief.html`](docs/shared-database-brief.html): what's loaded, what's left out, data sources, the cloud plan and insights (Oct 14 meeting with Philanthro Map). Download and open it in a browser; GitHub shows HTML as source.
+**Brief:** [read it below](#brief-one-database-for-our-990-projects): what's loaded, what's left out, data sources, the cloud plan and insights (Oct 14 meeting with Philanthro Map). Interactive version: [`docs/shared-database-brief.html`](docs/shared-database-brief.html).
 
 **Data sources:** [`docs/data-sources.md`](docs/data-sources.md): every source, connected or coming, by what it brings, with API links.
 
 **Health:** [`docs/db-health.md`](docs/db-health.md): checks, counts, freshness and table sizes; regenerate with `python3 etl/db_health.py` after a load.
 
 **Graph view:** [`docs/board-interlocks/`](docs/board-interlocks/): orgs that share board members, by state. Build its data with `python3 etl/export_interlocks.py` (git-ignored: it lists board members' names), then `python3 -m http.server -d docs/board-interlocks`.
+
+## Brief: one database for our 990 projects
+
+Written for the Oct 14, 2026 meeting with Tyler (Philanthro Map), kept current. Same content as an interactive page: [`docs/shared-database-brief.html`](docs/shared-database-brief.html) (download and open in a browser) or the [claude.ai brief](https://claude.ai/artifact/C9ijG2YA29zEoDEM9rs4Bf) (shared on request).
+
+| nonprofits | 990 returns | foundations | grants · 4 IRS years · $392B | counties | database |
+|---|---|---|---|---|---|
+| **1.97M** | **785,772** | **138,734** | **5.35M** | **3,144** | **14 GB** |
+
+- **Largest:** 990 text + vectors 7 GB, grants 2 GB, board members 1.5 GB, orgs 1.1 GB.
+- **Raw IRS files:** 58 GB (14 GB zips + 44 GB unzipped). Not stored. Re-downloadable.
+- **Why smaller:** we keep ~40 of ~440 values per 990, as numbers without XML tags.
+
+<details><summary><b>Database</b>: how data flows, what we keep and leave out, tables, vector search, limits</summary>
+
+### How data flows
+
+```mermaid
+flowchart LR
+  IRS["IRS 990s + master file"] --> ETL["Python ETL"]
+  CEN["Census"] --> ETL
+  ETL --> DB[("Postgres")]
+  DB --> NB["NomBot"]
+  DB --> GR["GrantRadar"]
+  DB -.-> PM["Philanthro Map"]
+```
+
+- **ETL:** scripts that download, clean and load public files. One per source, in [etl/](https://github.com/institute-on-generosity/generosity-data/tree/main/etl).
+- **Plain Python + psql.** Re-runs update rows, never duplicate.
+- **Runs** by hand. Monthly on GitHub Actions after the cloud move.
+
+### What we keep from a 990
+
+A typical 990 fills in **~440** values (median of 254 filings; 990-EZ ~160, 990-PF ~400). We keep about 40.
+
+| We keep | Part |
+|---|---|
+| **990 · ~40 fields** | |
+| Mission, programs | I, III |
+| Staff, volunteers, website | I |
+| Revenue, expenses, gifts, pay (2 years) | I |
+| Government grants | VIII |
+| Cash, assets, debts | X |
+| Program, admin, fundraising spend | IX |
+| Board, policies, audit | VI, XII |
+| Insider deals | IV |
+| Officers and pay | VII |
+| **990-PF · ~20 fields** | |
+| Assets, total giving | I |
+| Invite only, how to apply | XV 2 |
+| Each grant: who, amount, purpose | XV 3a |
+
+### What we leave out
+
+★ = worth adding next
+
+| Part | Not loaded |
+|---|---|
+| **990** | |
+| III | Dollars per program |
+| V | W-2 and 1099 counts, foreign accounts |
+| VII B | Contractors over $100K |
+| VIII | Revenue by source★ |
+| IX | 24 expense lines (rent, travel, IT)★ |
+| X | Balance sheet detail |
+| XII | Accounting method |
+| Sch. A | Charity type, public support test |
+| Sch. B | Donors (blanked in public copies) |
+| Sch. C | Lobbying, political spending |
+| Sch. D | Endowments, donor advised funds★ |
+| Sch. F | Work abroad |
+| Sch. G | Fundraising events |
+| Sch. H | Hospital community benefit |
+| Sch. I | Grants by community foundations, DAF sponsors★ |
+| Sch. J | Executive pay detail |
+| Sch. L | Insider deals, itemized |
+| Sch. M | Gifts of property, stock |
+| Sch. O | Free-text explanations |
+| Sch. R | Related orgs |
+| **990-PF** | |
+| I | Revenue and expense lines |
+| II | Investments |
+| Officers | Officers and pay |
+| XV 3b | Grants approved, not yet paid★ |
+| Activities | Program-related investments |
+
+### Tables
+
+```mermaid
+erDiagram
+  funders ||--o{ grants : pays
+  grants }o--o| orgs : "recipient_ein"
+  orgs ||--o{ filing_text : files
+  orgs ||--o{ filing_flag : files
+  orgs ||--o{ financials : reports
+  grants }o--|| zip_regions : "recipient_zip"
+  orgs }o--|| zip_regions : zip
+  zip_regions }o--|| county_need : county_fips
+```
+
+| Table | Holds |
+|---|---|
+| `orgs` | Every nonprofit: address, cause, revenue |
+| `financials` | Revenue, expenses, assets by year |
+| `filing_text` | Mission, programs, staff, website |
+| `filing_flag` | Cash, debts, spending, board, pay |
+| `funders` | Foundations: assets, how to apply |
+| `grants` | Each grant: recipient, ZIP, amount, purpose |
+| `zip_regions` | ZIP → county, Appalachia |
+| `county_need` | Poverty, income, population |
+
+### Vector search
+
+```mermaid
+flowchart LR
+  Q["Mission"] --> E["Embed"] --> V["HNSW search"] --> M["Merge"]
+  Q --> K["Keyword search"] --> M
+  M --> C["Claude scores top 40"]
+```
+
+- **Embedded:** mission + programs, 785,772 filings.
+- **Model:** nomic-embed-text-v1.5, local, 512 dimensions. Cloud: OpenAI text-embedding-3-small.
+- **Index:** HNSW cosine on `filing_latest`, the newest filing per org.
+- **Model switch:** re-embeds only stale rows, via `embedding_model`.
+- **GrantRadar:** mission → 150 closest grantees → their funders.
+
+### For Philanthro Map
+
+**90% of grants map to a county:** `grants.recipient_zip → zip_regions → county_need`.
+
+- **3,196** counties receive grants.
+- **52%** of grants stay in the funder's state.
+
+### Limits
+
+- **Text:** only orgs that e-file a 990 (541,879 of 1.97M).
+- **Years:** IRS 2023 to 2026 (tax years mostly 2022 to 2025).
+- **Recipients:** no EIN on grants. 56% matched by name.
+- **Individuals:** not on any 990.
+
+### Decide
+
+1. Schema changes: migration + PR?
+2. More years: before or after Supabase?
+3. Until then: local copy or my dump?
+4. What data is the map missing?
+5. One county map and color scale for both apps?
+
+</details>
+
+<details><summary><b>Data sources</b>: connected, coming, keeping it fresh</summary>
+
+Every source by what it brings, with API links and status: [`docs/data-sources.md`](docs/data-sources.md).
+
+### Keeping it fresh
+
+| How | Sources | When |
+|---|---|---|
+| **Nightly check** | IRS 990s, master file, Pub 78, revocations, Census | Every night, 2 AM |
+| **Frequent poll** | FEMA hourly. USAspending, Grants.gov daily | Asks only for records changed since last time |
+| **Instant write** | Claimed profiles, feedback, saved lists | The app writes straight to Supabase |
+| **Fetch on open** | ProPublica org detail | When a page opens, cached 1 day |
+
+**Nightly check:** Ask: anything new? → Load only the new records → Embed and link them → Publish all at once → Apps show it by morning.
+
+</details>
+
+<details><summary><b>Cloud plan</b>: now, next, ultimate; stages; how big; where embeddings run</summary>
+
+### Now, next, ultimate
+
+| | **Now**: Local only, $0 | **Next**: Cloud migration, ~$60 to $110 a month | **Ultimate**: Own workstation + cloud, ~$150 a month + workstation |
+|---|---|---|---|
+| **ETL** | Python on your Mac, by hand | GitHub Actions, monthly | Always-on workstation, nightly. More sources (Schedule I, more years) |
+| **Embed** | nomic. Filings on the Mac GPU, questions in the app | Embedding API (OpenAI or Voyage) for filings and questions | Best open model from the eval. Bulk on the workstation GPU, questions on a small hosted copy of the same model |
+| **Store** | Postgres on your Mac | Supabase Postgres + pgvector | Supabase + a read-only replica for the map and partners. Staging copy on the workstation |
+| **Serve** | Dev servers at localhost | Vercel: NomBot, GrantRadar, public API | Vercel, with a preview site for every change |
+| **Access** | Only you | Public apps and API. Map reads with a read-only role | API keys for partners, with usage limits |
+| **Backups** | None | Supabase, daily | Point-in-time restore. Raw IRS archive on the workstation |
+
+### Moving to the cloud
+
+1. **Get** (GitHub Actions, monthly): Download public files. Uses: Raw IRS files, Census files.
+2. **Clean + load** (GitHub Actions, monthly. Tested on your Mac first): Pull ~40 fields from each return into rows. Uses: ETL scripts, Postgres staging.
+3. **Embed** (OpenAI or Voyage servers, not ours): Turn each mission into 512 numbers. The ETL sends filings, the apps send questions. Uses: Embedding API.
+4. **Store** (Supabase): One shared database: tables and vectors together. Every app reads it. Uses: Postgres + pgvector, Auth, Daily backups.
+5. **Serve** (Vercel): Apps and API answer searches. Uses: NomBot, GrantRadar, Public API /api/v1/search, Claude API.
+6. **Use**: People and partner apps. Uses: Donors, nonprofits, developers, Philanthro Map.
+
+- **APIs:** only `/api/v1/search` is public (rate-limited). The database is never public.
+- **Stay small:** vectors for the newest filing per org only. `halfvec` halves their size.
+- **Cost:** Supabase with 4 to 8 GB of memory, ~$60 to $110 a month. ETL on GitHub Actions, free.
+
+#### How big it gets
+
+|   | Today | Worst case |
+|---|---|---|
+| Vectors | 786K | ~2M (every org) |
+| Vector index | 1.4 GB | ~3 GB (`halfvec`) |
+| Database | 14 GB | ~30 GB (10 IRS years) |
+
+#### Where the embedding model runs
+
+| Option | Cost | Catch |
+|---|---|---|
+| Embedding API (OpenAI, Voyage) ✓ | Pennies a month | Re-embed filings once, ~$3 |
+| Host nomic (Modal, Hugging Face) | ~$5 to $50 a month | One more service to run |
+| nomic inside the Vercel app | Free | 550 MB model, slow first searches |
+| Supabase built-in (gte-small) | Free | Weaker, 384 dims, schema change |
+| Your Mac | Free | Must stay on and online 24/7 |
+
+#### Steps
+
+1. Pick the embedding model (eval: nomic, OpenAI 3-small, Voyage 3.5-lite)
+2. Newest filing only, `halfvec`
+3. Supabase up, load from local
+4. Point the apps at Supabase
+5. Monthly ETL on GitHub Actions
+
+</details>
+
+<details><summary><b>Insights</b>: finding hidden patterns, what's missing, build order, tools</summary>
+
+### Finding hidden patterns
+
+| Ready | What we have |
+|---|---|
+| Meaning | Mission vectors find similar orgs in different words |
+| Money | 5.35M grants, funder to grantee, 4 IRS years |
+| Place | Orgs and grants on counties, joined to Census need |
+| People | 4.86M board seats at 679K orgs. Interlocks built (see below) |
+| Time | 225K orgs with 2+ years of filings |
+
+### What's missing
+
+| Gap | Why it blocks discovery | Fix |
+|---|---|---|
+| Weak links | 44% of grants unlinked. New sources use other IDs (UEI) or only names | ID crosswalk: EIN, UEI, name, address |
+| Hidden relationships | Who's connected to whom is buried in JSON and grant rows | Connections table: funds, shares a board member, related org, co-funded |
+| One kind of vector | Can't find funders by what they actually fund | Embed grant purposes and funder profiles |
+| Thin history | Trends need many years. Search keeps the newest only | Every year as a time series. Add IRS 2021 to 2022 |
+| No analytics layer | The model can't read 14 GB. App queries are tuned for lookups | Nightly signal tables. Read-only SQL tool for the model |
+| Trust per fact | Name-matched links can be wrong | Source and confidence on every link |
+
+### Patterns it could surface
+
+- **Board interlocks:** the same people on a funder's board and a grantee's.
+- **Funding deserts:** high-need counties with few grants and few active nonprofits.
+- **Co-funding clusters:** foundations that fund the same groups, so likely next funders for a peer.
+- **Early warnings:** falling revenue, a lost federal award and news of layoffs, together.
+- **Rising orgs:** fast growth, new funders and new programs in the same year.
+
+### Build order
+
+1. **Connections table** (Board interlocks done, Oct 14): Board interlocks from officer names: 977K same-state pairs, 45K high-confidence hidden links, 13,164 foundations paying an org they share board members with. [Graph view](https://claude.ai/artifact/8u9Nfum4wGRhAZhHJZF2VA). Co-funding next.
+2. **ID crosswalk**: Before USAspending and other new sources, so they link on day one.
+3. **Grant-purpose vectors** (Embedding API): Search funders by what they fund, not only by who they funded.
+4. **Signal tables** (Nightly): Deserts, clusters, trends, warnings, precomputed.
+5. **Model tools**: Read-only SQL over the signal tables, so the model asks its own questions.
+6. **LLM wiki** (Model-written, on top of the database): Linked pages for hubs (top ~2K funders, causes, states, notable counties), each pattern found, and the Giving Guides. Each page cites its query or source. Research Buddy reads the wiki first, SQL for exact numbers.
+
+### Tools that help
+
+| Tool | Use |
+|---|---|
+| **Link the same org across sources** | |
+| [Splink](https://moj-analytical-services.github.io/splink/) ★ | Matches on name, address and city together, with a confidence score. Millions of rows on a laptop |
+| [Claude Batch API](https://docs.anthropic.com/en/docs/build-with-claude/batch-processing) | Settles hard leftover matches by reading both records, at half price |
+| **Find connections** | |
+| [igraph / NetworkX](https://igraph.org) ★ | Clusters of funders, hidden hubs, likely next funders. Nightly, results back to Postgres |
+| [Neo4j Graph Data Science](https://neo4j.com/docs/graph-data-science/current/) | Same algorithms at larger scale, as a separate service |
+| [Apache AGE](https://age.apache.org) | Graph queries inside Postgres. Fewer parts, fewer algorithms |
+| [Microsoft GraphRAG](https://github.com/microsoft/graphrag) | An entity graph built from text: guides, websites, news |
+| **Find themes the IRS codes miss** | |
+| [BERTopic](https://maartengr.github.io/BERTopic/) ★ | Natural cause clusters from our vectors, and how they change over time |
+| [scikit-learn](https://scikit-learn.org) | Unusual jumps or drops, for early warnings and rising orgs |
+| **Let the model explore safely** | |
+| [Postgres / Supabase MCP, read-only](https://supabase.com/docs/guides/getting-started/mcp) ★ | Claude runs its own SQL and can't change data |
+| [dbt](https://docs.getdbt.com) ★ | Signal tables as tested, documented SQL, so the model reads clear definitions |
+| [DuckDB](https://duckdb.org) | Fast heavy analysis on a copy of the data, free, on the Mac |
+| **Keep it trustworthy** | |
+| [dbt tests / Great Expectations](https://greatexpectations.io) | Catch bad loads: missing years, sudden zeros, duplicate links |
+| [Dagster](https://dagster.io) | Pipelines with lineage and freshness checks, if GitHub Actions gets too small |
+| **See the patterns** | |
+| [Cosmograph](https://cosmograph.app) | Millions of graph links, interactive in a browser |
+| [Kepler.gl](https://kepler.gl) | Large maps, such as grants flowing between counties |
+
+★ Top 5, in order: Splink, graph algorithms, dbt, read-only MCP, BERTopic.
+
+</details>
 
 ## Local setup (proof of concept)
 
