@@ -1,6 +1,6 @@
 // Provider-agnostic 512-dim text embeddings.
 //   EMBED_PROVIDER=openai  -> text-embedding-3-small (dimensions: 512), needs OPENAI_API_KEY
-//   EMBED_PROVIDER=local   -> LOCAL FALLBACK for the POC only: nomic-embed-text-v1.5 run on
+//   EMBED_PROVIDER=local   -> LOCAL FALLBACK for the POC only: nomic-embed-text-v1.5 (full precision) run on
 //                             this machine (Matryoshka-truncated 768 -> 512). Not comparable
 //                             with OpenAI vectors; rows record their model in embedding_model.
 // Default: openai when OPENAI_API_KEY is set, otherwise local.
@@ -9,13 +9,13 @@ import { openai } from "@ai-sdk/openai";
 
 export const DIMS = 512;
 const provider = process.env.EMBED_PROVIDER || (process.env.OPENAI_API_KEY ? "openai" : "local");
-export const MODEL_ID = provider === "openai" ? "openai:text-embedding-3-small@512" : "local:nomic-embed-text-v1.5@512";
+export const MODEL_ID = provider === "openai" ? "openai:text-embedding-3-small@512" : "local:nomic-embed-text-v1.5-fp32@512";
 
 let extractor;
 async function local(texts, kind) {
   if (!extractor) {
     const { pipeline } = await import("@huggingface/transformers");
-    extractor = await pipeline("feature-extraction", "nomic-ai/nomic-embed-text-v1.5", { dtype: "q8" });
+    extractor = await pipeline("feature-extraction", "nomic-ai/nomic-embed-text-v1.5", { dtype: "fp32" });
   }
   const prefix = kind === "query" ? "search_query: " : "search_document: ";
   const out = await extractor(texts.map((t) => prefix + t), { pooling: "mean" });

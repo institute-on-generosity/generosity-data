@@ -21,7 +21,7 @@ Recipient matching (in SQL, same state only; orgs covers the loaded states):
   exact-city  normalized name matches several; the one in the same city wins   score 1
   fuzzy       trigram similarity >= 0.7 in the same city, >= 0.9 elsewhere     score = similarity (+0.1 same city)
 """
-import csv, functools, io, os, subprocess, sys, tempfile, xml.etree.ElementTree as ET
+import csv, functools, io, os, subprocess, sys, tempfile, time, xml.etree.ElementTree as ET
 from multiprocessing import Pool
 
 DB = os.environ.get("DATABASE_URL", "postgresql:///nombot")
@@ -111,48 +111,73 @@ def safe_parse(path):
     except (ET.ParseError, IndexError):
         return "bad"
 
-MATCH_SQL = f"""
+# Matching runs in three steps. The working tables are unlogged (not temp) so the fuzzy step can split
+# across WORKERS psql sessions: nationally there are ~1.3M distinct recipients against ~2M orgs, which one
+# session took days to match.
+WORKERS = 8
+PREP_SQL = f"""
 \\timing on
 UPDATE grants SET recipient_ein = NULL, match_score = NULL, match_method = NULL WHERE recipient_ein IS NOT NULL;
--- Normalize once: orgs in the loaded states, the grants to recipients there (by id), and each distinct
--- recipient (name, city, state). Only grants into the loaded states can match, so the rest are never read twice.
-CREATE TEMP TABLE o AS SELECT ein, org_norm(name) AS n, state AS st, upper(city) AS city FROM orgs;
-CREATE INDEX ON o (st, n); CREATE INDEX ON o USING gin (n gin_trgm_ops); ANALYZE o;
-CREATE TEMP TABLE gs AS SELECT id, org_norm(recipient_name) AS n, upper(coalesce(recipient_city, '')) AS city, recipient_state AS st
-  FROM grants WHERE recipient_state IN (SELECT DISTINCT st FROM o);
-CREATE TEMP TABLE r AS SELECT DISTINCT n, city, st FROM gs;
-ALTER TABLE r ADD ein char(9), ADD score real, ADD method text; ANALYZE r;
+DROP TABLE IF EXISTS match_o, match_gs, match_r, match_f;
+-- Normalize once: orgs, the grants to recipients in the loaded states (by id), and each distinct
+-- recipient (name, city, state). Only grants into the loaded states can match.
+CREATE UNLOGGED TABLE match_o AS SELECT ein, org_norm(name) AS n, state AS st, upper(city) AS city FROM orgs;
+-- (state, trigram) in one index (btree_gin), so a fuzzy lookup only searches that state's orgs
+CREATE INDEX ON match_o (st, n); CREATE INDEX ON match_o USING gin (st, n gin_trgm_ops); ANALYZE match_o;
+CREATE UNLOGGED TABLE match_gs AS SELECT id, org_norm(recipient_name) AS n, upper(coalesce(recipient_city, '')) AS city, recipient_state AS st
+  FROM grants WHERE recipient_state IN (SELECT DISTINCT st FROM match_o);
+CREATE UNLOGGED TABLE match_r AS SELECT DISTINCT n, city, st FROM match_gs;
+ALTER TABLE match_r ADD ein char(9), ADD score real, ADD method text; ANALYZE match_r;
 -- exact normalized name, unique in the state
-UPDATE r SET ein = m.ein, score = 1, method = 'exact'
-FROM (SELECT r.n, r.st, min(o.ein) AS ein FROM (SELECT DISTINCT n, st FROM r) r JOIN o USING (st, n) GROUP BY 1, 2 HAVING count(*) = 1) m
+UPDATE match_r r SET ein = m.ein, score = 1, method = 'exact'
+FROM (SELECT r.n, r.st, min(o.ein) AS ein FROM (SELECT DISTINCT n, st FROM match_r) r JOIN match_o o USING (st, n) GROUP BY 1, 2 HAVING count(*) = 1) m
 WHERE r.n = m.n AND r.st = m.st;
 -- exact name, several orgs in the state: the one in the recipient's city
-UPDATE r SET ein = m.ein, score = 1, method = 'exact-city'
-FROM (SELECT r.n, r.st, r.city, min(o.ein) AS ein FROM r JOIN o USING (st, n, city) WHERE r.ein IS NULL GROUP BY 1, 2, 3 HAVING count(*) = 1) m
+UPDATE match_r r SET ein = m.ein, score = 1, method = 'exact-city'
+FROM (SELECT r.n, r.st, r.city, min(o.ein) AS ein FROM match_r r JOIN match_o o USING (st, n, city) WHERE r.ein IS NULL GROUP BY 1, 2, 3 HAVING count(*) = 1) m
 WHERE r.n = m.n AND r.st = m.st AND r.city = m.city AND r.ein IS NULL;
--- fuzzy: best trigram match in the state, +0.1 when the city matches too
-SET pg_trgm.similarity_threshold = {FUZZY};
-UPDATE r SET ein = m.ein, score = m.score, method = 'fuzzy'
-FROM (SELECT DISTINCT ON (r.n, r.st, r.city) r.n, r.st, r.city, o.ein,
-        least(1, similarity(o.n, r.n) + CASE WHEN o.city = r.city THEN 0.1 ELSE 0 END)::real AS score
-      FROM r JOIN o ON o.n % r.n AND o.st = r.st
-      WHERE r.ein IS NULL AND length(r.n) >= 6
-        AND similarity(o.n, r.n) >= CASE WHEN o.city = r.city THEN {CITY_FUZZY} ELSE {FAR_FUZZY} END
-      ORDER BY r.n, r.st, r.city, score DESC) m
-WHERE r.n = m.n AND r.st = m.st AND r.city = m.city;
+CREATE UNLOGGED TABLE match_f (n text, city text, st text, ein char(9), score real);
+"""
+# fuzzy: best trigram match in the state, +0.1 when the city matches too; worker k takes its share of names.
+# Candidates start at CITY_FUZZY, the lowest similarity ever accepted, so nothing is lost by the cutoff.
+FUZZY_SQL = f"""
+SET pg_trgm.similarity_threshold = {CITY_FUZZY};
+INSERT INTO match_f
+SELECT DISTINCT ON (r.n, r.st, r.city) r.n, r.city, r.st, o.ein,
+       least(1, similarity(o.n, r.n) + CASE WHEN o.city = r.city THEN 0.1 ELSE 0 END)::real AS score
+FROM match_r r JOIN match_o o ON o.n % r.n AND o.st = r.st
+WHERE r.ein IS NULL AND length(r.n) >= 6 AND abs(hashtext(r.n)) % {WORKERS} = :k
+  AND similarity(o.n, r.n) >= CASE WHEN o.city = r.city THEN {CITY_FUZZY} ELSE {FAR_FUZZY} END
+ORDER BY r.n, r.st, r.city, score DESC;
+"""
+WRITE_SQL = """
+\\timing on
+UPDATE match_r r SET ein = f.ein, score = f.score, method = 'fuzzy' FROM match_f f WHERE r.n = f.n AND r.st = f.st AND r.city = f.city;
 -- write the links back by grant id
-CREATE INDEX ON r (st, n, city); ANALYZE gs;
+CREATE INDEX ON match_r (st, n, city); ANALYZE match_gs;
 UPDATE grants g SET recipient_ein = r.ein, match_score = r.score, match_method = r.method
-FROM gs JOIN r USING (n, city, st) WHERE r.ein IS NOT NULL AND g.id = gs.id;
+FROM match_gs gs JOIN match_r r USING (n, city, st) WHERE r.ein IS NOT NULL AND g.id = gs.id;
+DROP TABLE match_o, match_gs, match_r, match_f;
 """
 
 print = functools.partial(print, flush=True)  # progress shows up when piped to a log
 
 def match():
     """Link grant recipients to orgs, timing each step (python3 etl/load_grants.py --match-only reruns just this)."""
-    out = subprocess.run(["psql", DB, "-v", "ON_ERROR_STOP=1", "-q"], input=MATCH_SQL, text=True, capture_output=True)
-    print(" · ".join(l.replace("Time: ", "").split(" (")[0] for l in out.stdout.splitlines() if l.startswith("Time:")))
-    if out.returncode: sys.exit(f"psql failed: {out.stderr.strip()[:2000]}")
+    def run(sql, *args):
+        return subprocess.run(["psql", DB, "-v", "ON_ERROR_STOP=1", "-q", *args], input=sql, text=True, capture_output=True)
+    def check(step, out):
+        print(f"{step}: " + " · ".join(l.replace("Time: ", "").split(" (")[0] for l in out.stdout.splitlines() if l.startswith("Time:")), flush=True)
+        if out.returncode: sys.exit(f"psql failed: {out.stderr.strip()[:2000]}")
+    check("prepare + exact", run(PREP_SQL))
+    t0 = time.time()
+    procs = [subprocess.Popen(["psql", DB, "-v", "ON_ERROR_STOP=1", "-q", "-v", f"k={k}"], stdin=subprocess.PIPE, text=True, stderr=subprocess.PIPE)
+             for k in range(WORKERS)]
+    for p in procs: p.stdin.write(FUZZY_SQL); p.stdin.close()
+    errs = [p.stderr.read() for p in procs if p.wait()]
+    if errs: sys.exit(f"psql failed: {errs[0].strip()[:2000]}")
+    print(f"fuzzy ({WORKERS} workers): {time.time() - t0:.0f}s", flush=True)
+    check("write back", run(WRITE_SQL))
     report()
 
 def report():

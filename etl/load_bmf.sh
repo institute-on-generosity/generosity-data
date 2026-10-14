@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Download the IRS EO BMF for the given states and upsert into orgs.
-# Usage: STATES="wv ky tn va oh" etl/load_bmf.sh
+# Usage: STATES="wv ky tn va oh" etl/load_bmf.sh   (or STATES=all)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DB="${DATABASE_URL:-postgresql:///nombot}"
 STATES="${STATES:-wv ky tn va oh}"
+# STATES=all: every state, DC and Puerto Rico (the IRS publishes one file per state)
+[ "$STATES" = all ] && STATES="al ak az ar ca co ct de dc fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok or pa ri sc sd tn tx ut vt va wa wv wi wy pr"
 mkdir -p data/bmf
 
 for st in $STATES; do
