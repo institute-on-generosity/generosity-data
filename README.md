@@ -2,6 +2,8 @@
 
 Shared IRS nonprofit data pipeline and Postgres + pgvector schema for [NomBot](https://github.com/institute-on-generosity/NomBot) and [GrantRadar](https://github.com/institute-on-generosity/GrantRadar).
 
+**Brief:** [`docs/shared-database-brief.html`](docs/shared-database-brief.html): what's loaded, what's left out, and the cloud plan (Oct 14 meeting with Philanthro Map). Download and open it in a browser; GitHub shows HTML as source.
+
 ## Local setup (proof of concept)
 
 ```bash

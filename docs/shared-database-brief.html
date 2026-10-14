@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Meeting brief for Hunter + Tyler (Oct 14, 2026). Also published as a claude.ai artifact. Numbers are as of before the 2026 IRS load. -->
+<title>Shared 990 Database</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of a meeting brief; numbers and tables break out to the column's full width. */
+:root {
+  --bg: #fbfcfa; --surface: #f1f4ef; --ink: #1b221d; --ink-2: #4a544d; --mute: #6f7a72; --line: #dfe5dc;
+  --accent: #248a3d; --accent-ink: #1d6f31; --accent-tint: #e5f2e8; --warn: #9a5b00; --warn-tint: #fbf0dc;
+  --display: "Fraunces", Georgia, "Times New Roman", serif;
+  --body: "Public Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121613; --surface: #1b211d; --ink: #e9eee9; --ink-2: #b9c2bb; --mute: #8d978f; --line: #2b332d;
+  --accent: #4cc46c; --accent-ink: #7fd895; --accent-tint: #1d3324; --warn: #f0b860; --warn-tint: #33280f; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121613; --surface: #1b211d; --ink: #e9eee9; --ink-2: #b9c2bb; --mute: #8d978f; --line: #2b332d;
+  --accent: #4cc46c; --accent-ink: #7fd895; --accent-tint: #1d3324; --warn: #f0b860; --warn-tint: #33280f; color-scheme: dark }
+
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.6; padding-inline: 20px; padding-block: 48px 72px; }
+.wrap { max-width: 680px; margin: 0 auto; display: grid; gap: 36px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-ink); }
+h1 { font-family: var(--display); font-weight: 600; font-size: clamp(32px, 6vw, 44px); line-height: 1.08; letter-spacing: -.01em; margin: 0; text-wrap: balance; }
+.meta { font-size: 13.5px; color: var(--mute); margin: 0; }
+section { display: grid; gap: 14px; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 24px; line-height: 1.2; margin: 0; text-wrap: balance; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 66ch; }
+ul, ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 66ch; }
+li::marker { color: var(--mute); }
+li > ul { margin-top: 6px; }
+b, strong { font-weight: 600; }
+code { font-family: var(--mono); font-size: .86em; background: var(--surface); padding: 1px 5px; border-radius: 4px; }
+a { color: var(--accent-ink); text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.stat { background: var(--bg); padding: 16px 18px; display: grid; gap: 2px; min-width: 0; }
+.stat b { font-family: var(--display); font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 13px; color: var(--mute); }
+
+.table { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--mute); background: var(--surface); }
+tr:last-child td { border-bottom: 0; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td:first-child { white-space: nowrap; }
+
+.key { background: var(--accent-tint); border-radius: 12px; padding: 18px 20px; display: grid; gap: 8px; }
+.key h3 { color: var(--accent-ink); }
+.flow { font-family: var(--mono); font-size: 13px; color: var(--ink-2); overflow-x: auto; white-space: nowrap; padding: 2px 0; }
+.flow i { font-style: normal; color: var(--accent-ink); }
+
+.gotchas li b { color: var(--warn); }
+.agenda { counter-reset: q; list-style: none; padding: 0; gap: 8px; }
+.agenda h3 { font-weight: 500; line-height: 1.5; }
+.agenda li { counter-increment: q; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+.agenda li::before { content: counter(q); font-family: var(--display); font-weight: 600; font-size: 16px; color: var(--accent-ink); line-height: 1.5; }
+pre { margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--surface); border-radius: 10px; padding: 14px 16px; overflow-x: auto; color: var(--ink); }
+@media (max-width: 480px) { body { font-size: 15px; padding-block: 32px 56px; } .stat b { font-size: 24px; } }
+
+.diagram { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: var(--bg); }
+.diagram pre.mermaid { background: none; padding: 0; margin: 0; text-align: center; font-family: var(--body); }
+.bar { display: flex; height: 30px; border-radius: 8px; overflow: hidden; background: var(--bg); font-size: 12.5px; font-weight: 600; }
+.bar-fill { background: var(--accent); color: var(--bg); display: flex; align-items: center; padding-left: 12px; white-space: nowrap; }
+.bar-rest { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--mute); }
+@media (max-width: 480px) { .bar-fill span { font-size: 11.5px; } }
+.term { position: relative; border-bottom: 1px dotted var(--accent); cursor: help; outline: none; white-space: nowrap; }
+.term .tip { white-space: normal; }
+.term:focus-visible { border-radius: 3px; box-shadow: 0 0 0 2px var(--accent-tint); }
+.term .tip { position: absolute; left: -12px; bottom: calc(100% + 8px); width: min(300px, calc(100vw - 32px));
+  background: var(--surface); color: var(--ink-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  font-size: 13px; line-height: 1.5; font-weight: 400; box-shadow: 0 6px 20px rgb(0 0 0 / .12); z-index: 10;
+  opacity: 0; visibility: hidden; transition: opacity .15s; pointer-events: none; }
+.term:hover .tip, .term:focus .tip { opacity: 1; visibility: visible; }
+.tip b { color: var(--ink); }
+.compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 16px; align-items: start; }
+@media (max-width: 720px) { .compare { grid-template-columns: minmax(0, 1fr); } }
+.full990 { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: grid; gap: 10px; }
+.full990 .big { font-family: var(--display); font-size: 28px; line-height: 1.1; font-weight: 600; }
+.full990 ul { gap: 3px; font-size: 14px; }
+.star { color: var(--warn); }
+
+/* Optical alignment */
+.stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }            /* 6 stats fill 3x2, no empty cell */
+@media (max-width: 480px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.stat b { letter-spacing: -.01em; margin-left: -1px; }                   /* serif digits sit 1px right of the label */
+ul, ol { padding-left: 0; list-style-position: outside; }               /* bullets hang, text aligns with headings */
+li { margin-left: 1.15em; }
+.wrap > section > ul, .wrap > section > ol { padding-left: 0; }
+.agenda li { margin-left: 0; align-items: baseline; }                   /* number and question share a baseline */
+.agenda li::before { line-height: 1; }
+.compare { align-items: stretch; }                                       /* callout and table same height */
+.full990 { align-content: start; }
+.full990 .big { margin-left: -1px; font-variant-numeric: tabular-nums; }
+th, td { padding: 9px 14px; }
+td .star { margin-left: 3px; font-size: .9em; }
+.part { color: var(--mute); white-space: nowrap; font-size: 13px; font-variant-numeric: tabular-nums; }
+tr.grp td { background: var(--surface); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--mute); padding-block: 7px; }
+.compare td:first-child { white-space: normal; }
+
+/* Tabs: hidden panel keeps its width (visibility, not display) so diagrams measure correctly */
+.tabs { display: flex; gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; width: fit-content; margin-top: -12px; }
+.tabs button { font: inherit; font-size: 14px; font-weight: 500; line-height: 1; color: var(--ink-2); background: none; border: 0; border-radius: 7px; padding: 8px 14px; cursor: pointer; }
+.tabs button:hover { color: var(--ink); }
+.tabs button[aria-selected="true"] { background: var(--bg); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
+.tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.panel { display: grid; gap: 36px; }
+.panel[aria-hidden="true"] { visibility: hidden; position: absolute; inset-inline: 0; height: 0; overflow: hidden; }
+.wrap { position: relative; }
+
+/* Cloud diagram: top to bottom, two columns that line up with the Vercel | Supabase pair */
+.arch { display: grid; gap: 6px; }
+.zone { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--bg); display: grid; gap: 8px; }
+.zone h4 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-ink); line-height: 1; }
+.zone.db { background: var(--accent-tint); border-color: transparent; }
+.zone.ext { background: var(--surface); }
+.zone.ext.gap { margin-top: 12px; }
+.zone.people { border-style: dashed; }
+.zone.people + .mid, .pair .zone.people ~ .mid { visibility: hidden; }
+.chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; max-width: none; }
+.chips li { margin: 0; font-size: 13.5px; line-height: 1; padding: 7px 10px; border-radius: 7px; background: var(--surface); }
+.zone.db .chips li { background: var(--bg); }
+.zone.ext .chips li { background: var(--bg); }
+.chips li i { font-style: normal; color: var(--mute); margin-left: 4px; }
+.chips li.pub { box-shadow: inset 0 0 0 1px var(--accent); }
+.chips code { background: none; padding: 0; font-size: 12px; }
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: stretch; }
+.mid { align-self: center; font-size: 12.5px; color: var(--mute); white-space: nowrap; }
+.links { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); column-gap: 8px; font-size: 12.5px; color: var(--mute); line-height: 1.4; }
+.links span { padding-left: 14px; }          /* line up with the text inside each zone */
+.links span:last-child { grid-column: 3; }
+.links::before { content: "query →"; grid-column: 2; grid-row: 1; visibility: hidden; font-size: 12.5px; } /* same width as the middle column */
+.mid .d { display: none; }
+@media (max-width: 560px) {
+  .pair { grid-template-columns: minmax(0, 1fr); }
+  .mid { justify-self: start; padding-left: 14px; }
+  .mid .r { display: none; } .mid .d { display: inline; }
+  .links { grid-template-columns: minmax(0, 1fr); row-gap: 2px; }
+  .links::before { display: none; }
+  .links span:last-child { grid-column: 1; }
+}
+.table tr.pick td { background: var(--accent-tint); }
+.table tr.pick td:first-child { font-weight: 600; color: var(--accent-ink); }
+#p-cloud .table td.n { text-align: left; }
+
+/* Cloud stages: numbered steps joined by a rail; every chip has a "?" popover */
+.stages { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; counter-reset: st; max-width: none; }
+.stage { counter-increment: st; position: relative; margin: 0; padding: 0 0 18px 44px; display: grid; gap: 6px; }
+.stage::before { content: counter(st); position: absolute; left: 0; top: -1px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  font-family: var(--display); font-weight: 600; font-size: 15px; line-height: 1; color: var(--accent-ink); background: var(--accent-tint); }
+.stage::after { content: ""; position: absolute; left: 13.5px; top: 31px; bottom: 3px; width: 1px; background: var(--line); }
+.stage:last-child { padding-bottom: 0; } .stage:last-child::after { display: none; }
+.stage.db::before { background: var(--accent); color: var(--bg); }
+.stage-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-height: 26px; }
+.stage-head h4 { margin: 0; font-size: 16px; font-weight: 600; line-height: 26px; }
+.where { font-size: 12px; color: var(--mute); }
+.stage p { font-size: 14px; color: var(--ink-2); }
+.stages .chips li, .side .chips li { display: inline-flex; align-items: center; gap: 6px; position: relative; }
+.q { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; font-size: 10px; font-weight: 600; line-height: 1;
+  color: var(--mute); box-shadow: inset 0 0 0 1px var(--line); cursor: help; outline: none; position: relative; }
+.q:hover, .q:focus-visible { color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent); }
+.q .tip { position: absolute; left: -12px; bottom: calc(100% + 8px); width: min(280px, calc(100vw - 32px));
+  background: var(--surface); color: var(--ink-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; text-align: left;
+  font-size: 13px; line-height: 1.5; font-weight: 400; box-shadow: 0 6px 20px rgb(0 0 0 / .12); z-index: 10;
+  opacity: 0; visibility: hidden; transition: opacity .15s; pointer-events: none; }
+.q:hover .tip, .q:focus .tip { opacity: 1; visibility: visible; }
+.side { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.side > div { border: 1px dashed var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 8px; }
+.side h4 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--mute); line-height: 1; }
+@media (max-width: 560px) { .side { grid-template-columns: minmax(0, 1fr); } }
+
+/* Now / next / ultimate: three columns, rows line up across columns; stacks on phones */
+.phases { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 10px; row-gap: 14px; }
+.ph-head { display: grid; gap: 2px; padding: 0 2px 2px; }
+.ph-head h4 { margin: 0; font-family: var(--display); font-size: 20px; font-weight: 600; line-height: 1.15; }
+.ph-head span { font-size: 13px; color: var(--ink-2); }
+.ph-head b { font-size: 12.5px; font-weight: 500; color: var(--mute); }
+.ph-cell { position: relative; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font-size: 13.5px; line-height: 1.45; display: grid; gap: 3px; align-content: start; background: var(--bg); }
+.ph-cell i { font-style: normal; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--mute); line-height: 1.2; }
+.ph-cell:not(.last)::after { content: ""; position: absolute; left: 50%; bottom: -14px; width: 1px; height: 14px; background: var(--line); }
+.phases > [style*="grid-column:2"].ph-cell { background: var(--accent-tint); border-color: transparent; }
+.phases > [style*="grid-column:3"].ph-cell { border-style: dashed; }
+@media (max-width: 600px) {
+  .phases { grid-template-columns: minmax(0, 1fr); }
+  .phases > * { grid-column: 1 !important; grid-row: auto !important; }
+  .ph-head:not(:first-child) { margin-top: 18px; }
+}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Hunter + Tyler · Oct 14, 2026</span>
+    <h1>One database for our 990 projects</h1>
+    <p class="meta"><a href="https://github.com/institute-on-generosity/generosity-data">generosity-data</a> · Postgres + pgvector · all US</p>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Brief sections">
+    <button role="tab" id="t-db" aria-controls="p-db" aria-selected="true">Database</button>
+    <button role="tab" id="t-cloud" aria-controls="p-cloud" aria-selected="false" tabindex="-1">Cloud plan</button>
+  </nav>
+
+  <div class="panel" role="tabpanel" id="p-db" aria-labelledby="t-db">
+
+  <section>
+    <div class="stats">
+      <div class="stat"><b>1.97M</b><span>nonprofits</span></div>
+      <div class="stat"><b>513,813</b><span>990 returns</span></div>
+      <div class="stat"><b>135,407</b><span>foundations</span></div>
+      <div class="stat"><b>4.84M</b><span>grants · 3 years · $365B</span></div>
+      <div class="stat"><b>3,144</b><span>counties</span></div>
+      <div class="stat"><b>11 GB</b><span>database</span></div>
+    </div>
+    <ul>
+      <li><b>Largest:</b> 990 text + vectors 6 GB, grants 1.9 GB, orgs 1.1 GB.</li>
+      <li><b>Raw IRS files:</b> 46 GB (13 GB zips + 33 GB unzipped). Not stored. Re-downloadable.</li>
+      <li><b>Why smaller:</b> we keep ~40 of ~440 values per 990, as numbers without XML tags.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>How data flows</h2>
+    <div class="diagram"><pre class="mermaid">
+flowchart LR
+  IRS["IRS 990s + master file"] --> ETL["Python ETL"]
+  CEN["Census"] --> ETL
+  ETL --> DB[("Postgres")]
+  DB --> NB["NomBot"]
+  DB --> GR["GrantRadar"]
+  DB -.-> PM["Philanthro Map"]
+</pre></div>
+    <ul>
+      <li><b>ETL:</b> scripts that download, clean and load public files. One per source, in <a href="https://github.com/institute-on-generosity/generosity-data/tree/main/etl"><code>etl/</code></a>.</li>
+      <li><b>Plain Python + <code>psql</code>.</b> Re-runs update rows, never duplicate.</li>
+      <li><b>Runs</b> by hand. Monthly on GitHub Actions after the cloud move.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Sources</h2>
+    <p class="meta">Bulk downloads. No API keys.</p>
+    <div class="table">
+      <table>
+        <tbody>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/exempt-organizations-business-master-file-extract-eo-bmf">IRS master file</a></td><td><code>orgs</code></td></tr>
+          <tr><td><a href="https://www.irs.gov/statistics/soi-tax-stats-annual-extract-of-tax-exempt-organization-financial-data">IRS SOI extract</a></td><td><code>financials</code></td></tr>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/form-990-series-downloads">IRS 990 e-file XML</a></td><td><code>filing_text</code> · <code>filing_flag</code> · <code>funders</code> · <code>grants</code></td></tr>
+          <tr><td><a href="https://www.census.gov/programs-surveys/saipe.html">Census poverty</a> + <a href="https://www.census.gov/programs-surveys/popest.html">population</a></td><td><code>county_need</code></td></tr>
+          <tr><td><a href="https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/">Census ZIP → county</a> + <a href="https://en.wikipedia.org/wiki/List_of_Appalachian_Regional_Commission_counties">ARC</a></td><td><code>zip_regions</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>What we keep from a 990</h2>
+    <div class="compare">
+      <div class="full990">
+        <h3>A full 990</h3>
+        <div class="big">~440</div>
+        <p class="meta">values filed (median, 254 filings). 990-EZ ~160. 990-PF ~400.</p>
+        <ul>
+          <li>Parts I to XII</li>
+          <li>Schedules A to R</li>
+          <li>Rows per officer and grant</li>
+        </ul>
+      </div>
+      <div class="table">
+        <table>
+          <thead><tr><th>We keep</th><th>Part</th></tr></thead>
+          <tbody>
+          <tr class="grp"><td colspan="2">990 · ~40 fields</td></tr>
+          <tr><td>Mission, programs</td><td class="part">I, III</td></tr>
+          <tr><td>Staff, volunteers, website</td><td class="part">I</td></tr>
+          <tr><td>Revenue, expenses, gifts, pay (2 years)</td><td class="part">I</td></tr>
+          <tr><td>Government grants</td><td class="part">VIII</td></tr>
+          <tr><td>Cash, assets, debts</td><td class="part">X</td></tr>
+          <tr><td>Program, admin, fundraising spend</td><td class="part">IX</td></tr>
+          <tr><td>Board, policies, audit</td><td class="part">VI, XII</td></tr>
+          <tr><td>Insider deals</td><td class="part">IV</td></tr>
+          <tr><td>Officers and pay</td><td class="part">VII</td></tr>
+          <tr class="grp"><td colspan="2">990-PF · ~20 fields</td></tr>
+          <tr><td>Assets, total giving</td><td class="part">I</td></tr>
+          <tr><td>Invite only, how to apply</td><td class="part">XV 2</td></tr>
+          <tr><td>Each grant: who, amount, purpose</td><td class="part">XV 3a</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What we leave out</h2>
+    <p class="meta"><span class="star">★</span> Worth adding next</p>
+    <div class="table">
+      <table>
+        <thead><tr><th>Part</th><th>Not loaded</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="2">990</td></tr>
+          <tr><td class="part">III</td><td>Dollars per program</td></tr>
+          <tr><td class="part">V</td><td>W-2 and 1099 counts, foreign accounts</td></tr>
+          <tr><td class="part">VII B</td><td>Contractors over $100K</td></tr>
+          <tr><td class="part">VIII</td><td>Revenue by source<span class="star">★</span></td></tr>
+          <tr><td class="part">IX</td><td>24 expense lines (rent, travel, IT)<span class="star">★</span></td></tr>
+          <tr><td class="part">X</td><td>Balance sheet detail</td></tr>
+          <tr><td class="part">XII</td><td>Accounting method</td></tr>
+          <tr><td class="part">Sch. A</td><td>Charity type, public support test</td></tr>
+          <tr><td class="part">Sch. B</td><td>Donors (blanked in public copies)</td></tr>
+          <tr><td class="part">Sch. C</td><td>Lobbying, political spending</td></tr>
+          <tr><td class="part">Sch. D</td><td>Endowments, donor advised funds<span class="star">★</span></td></tr>
+          <tr><td class="part">Sch. F</td><td>Work abroad</td></tr>
+          <tr><td class="part">Sch. G</td><td>Fundraising events</td></tr>
+          <tr><td class="part">Sch. H</td><td>Hospital community benefit</td></tr>
+          <tr><td class="part">Sch. I</td><td>Grants by community foundations, DAF sponsors<span class="star">★</span></td></tr>
+          <tr><td class="part">Sch. J</td><td>Executive pay detail</td></tr>
+          <tr><td class="part">Sch. L</td><td>Insider deals, itemized</td></tr>
+          <tr><td class="part">Sch. M</td><td>Gifts of property, stock</td></tr>
+          <tr><td class="part">Sch. O</td><td>Free-text explanations</td></tr>
+          <tr><td class="part">Sch. R</td><td>Related orgs</td></tr>
+          <tr class="grp"><td colspan="2">990-PF</td></tr>
+          <tr><td class="part">I</td><td>Revenue and expense lines</td></tr>
+          <tr><td class="part">II</td><td>Investments</td></tr>
+          <tr><td class="part">Officers</td><td>Officers and pay</td></tr>
+          <tr><td class="part">XV 3b</td><td>Grants approved, not yet paid<span class="star">★</span></td></tr>
+          <tr><td class="part">Activities</td><td>Program-related investments</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Tables</h2>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+  funders ||--o{ grants : pays
+  grants }o--o| orgs : "recipient_ein"
+  orgs ||--o{ filing_text : files
+  orgs ||--o{ filing_flag : files
+  orgs ||--o{ financials : reports
+  grants }o--|| zip_regions : "recipient_zip"
+  orgs }o--|| zip_regions : zip
+  zip_regions }o--|| county_need : county_fips
+</pre></div>
+    <div class="table">
+      <table>
+        <tbody>
+          <tr><td><code>orgs</code></td><td>Every nonprofit: address, cause, revenue</td></tr>
+          <tr><td><code>financials</code></td><td>Revenue, expenses, assets by year</td></tr>
+          <tr><td><code>filing_text</code></td><td>Mission, programs, staff, website</td></tr>
+          <tr><td><code>filing_flag</code></td><td>Cash, debts, spending, board, pay</td></tr>
+          <tr><td><code>funders</code></td><td>Foundations: assets, how to apply</td></tr>
+          <tr><td><code>grants</code></td><td>Each grant: recipient, ZIP, amount, purpose</td></tr>
+          <tr><td><code>zip_regions</code></td><td>ZIP → county, Appalachia</td></tr>
+          <tr><td><code>county_need</code></td><td>Poverty, income, population</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Vector search</h2>
+    <div class="diagram"><pre class="mermaid">
+flowchart LR
+  Q["Mission"] --> E["Embed"] --> V["HNSW search"] --> M["Merge"]
+  Q --> K["Keyword search"] --> M
+  M --> C["Claude scores top 40"]
+</pre></div>
+    <ul>
+      <li><b>Embedded:</b> mission + programs, 513,813 filings.</li>
+      <li><b>Model:</b> <span class="term" tabindex="0">nomic-embed-text-v1.5<span class="tip" role="tooltip"><b>Open-source model from Nomic AI.</b> Runs on our machine. Free, no API key. Makes 768 numbers per text. We keep the first 512, which it is trained to allow.</span></span>, local, 512 dimensions. Cloud: <span class="term" tabindex="0">OpenAI text-embedding-3-small<span class="tip" role="tooltip"><b>OpenAI's paid embedding model, via its API.</b> About $0.02 per million tokens. Returns 512 numbers directly. Nothing to run on our side.</span></span>.</li>
+      <li><b>Index:</b> <span class="term" tabindex="0">HNSW cosine<span class="tip" role="tooltip"><b>Finds the closest vectors without checking all 473,474.</b> HNSW links each vector to its near neighbors, and a search hops along those links. <b>Cosine</b> scores how alike two vectors are, here two missions.</span></span> on <code>filing_latest</code>, the newest filing per org.</li>
+      <li><b>Model switch:</b> re-embeds only stale rows, via <code>embedding_model</code>.</li>
+      <li><b>GrantRadar:</b> mission → 150 closest grantees → their funders.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>For Philanthro Map</h2>
+    <div class="key">
+      <h3>90% of grants map to a county</h3>
+      <div class="flow">grants.recipient_zip <i>→</i> zip_regions <i>→</i> county_need</div>
+      <div class="bar" role="img" aria-label="90% of grants map to a county">
+        <div class="bar-fill" style="width:90%"><span>4.36M grants</span></div>
+        <div class="bar-rest"><span>10%</span></div>
+      </div>
+    </div>
+    <ul>
+      <li><b>3,191</b> counties receive grants.</li>
+      <li><b>52%</b> of grants stay in the funder's state.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Limits</h2>
+    <ul class="gotchas">
+      <li><b>Text:</b> only orgs that e-file a 990 (473,474 of 1.97M).</li>
+      <li><b>Years:</b> IRS 2023 to 2025 (tax years mostly 2022 to 2024).</li>
+      <li><b>Recipients:</b> no EIN on grants. 57% matched by name.</li>
+      <li><b>Individuals:</b> not on any 990.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Decide</h2>
+    <ol class="agenda">
+      <li><h3>Schema changes: migration + PR?</h3></li>
+      <li><h3>More years: before or after Supabase?</h3></li>
+      <li><h3>Until then: local copy or my dump?</h3></li>
+      <li><h3>What data is the map missing?</h3></li>
+      <li><h3>One county map and color scale for both apps?</h3></li>
+    </ol>
+  </section>
+  </div>
+
+  <div class="panel" role="tabpanel" id="p-cloud" aria-labelledby="t-cloud" aria-hidden="true">
+  <section>
+    <h2>Now, next, ultimate</h2>
+    <div class="phases">
+      <div class="ph-head" style="grid-column:1;grid-row:1"><h4>Now</h4><span>Local only</span><b>$0</b></div>
+      <div class="ph-cell" style="grid-column:1;grid-row:2"><i>ETL</i>Python on your Mac, by hand</div>
+      <div class="ph-cell" style="grid-column:1;grid-row:3"><i>Embed</i>nomic. Filings on the Mac GPU, questions in the app</div>
+      <div class="ph-cell" style="grid-column:1;grid-row:4"><i>Store</i>Postgres on your Mac</div>
+      <div class="ph-cell" style="grid-column:1;grid-row:5"><i>Serve</i>Dev servers at localhost</div>
+      <div class="ph-cell" style="grid-column:1;grid-row:6"><i>Access</i>Only you</div>
+      <div class="ph-cell last" style="grid-column:1;grid-row:7"><i>Backups</i>None</div>
+      <div class="ph-head" style="grid-column:2;grid-row:1"><h4>Next</h4><span>Cloud migration</span><b>~$60 to $110 a month</b></div>
+      <div class="ph-cell" style="grid-column:2;grid-row:2"><i>ETL</i>GitHub Actions, monthly</div>
+      <div class="ph-cell" style="grid-column:2;grid-row:3"><i>Embed</i>Embedding API (OpenAI or Voyage) for filings and questions</div>
+      <div class="ph-cell" style="grid-column:2;grid-row:4"><i>Store</i>Supabase Postgres + pgvector</div>
+      <div class="ph-cell" style="grid-column:2;grid-row:5"><i>Serve</i>Vercel: NomBot, GrantRadar, public API</div>
+      <div class="ph-cell" style="grid-column:2;grid-row:6"><i>Access</i>Public apps and API. Map reads with a read-only role</div>
+      <div class="ph-cell last" style="grid-column:2;grid-row:7"><i>Backups</i>Supabase, daily</div>
+      <div class="ph-head" style="grid-column:3;grid-row:1"><h4>Ultimate</h4><span>Own workstation + cloud</span><b>~$150 a month + workstation</b></div>
+      <div class="ph-cell" style="grid-column:3;grid-row:2"><i>ETL</i>Always-on workstation, nightly. More sources (Schedule I, more years)</div>
+      <div class="ph-cell" style="grid-column:3;grid-row:3"><i>Embed</i>Best open model from the eval. Bulk on the workstation GPU, questions on a small hosted copy of the same model</div>
+      <div class="ph-cell" style="grid-column:3;grid-row:4"><i>Store</i>Supabase + a read-only replica for the map and partners. Staging copy on the workstation</div>
+      <div class="ph-cell" style="grid-column:3;grid-row:5"><i>Serve</i>Vercel, with a preview site for every change</div>
+      <div class="ph-cell" style="grid-column:3;grid-row:6"><i>Access</i>API keys for partners, with usage limits</div>
+      <div class="ph-cell last" style="grid-column:3;grid-row:7"><i>Backups</i>Point-in-time restore. Raw IRS archive on the workstation</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Moving to the cloud</h2>
+    <ol class="stages" aria-label="How data moves, in order">
+      <li class="stage">
+        <div class="stage-head"><h4>Get</h4><span class="where">GitHub Actions, monthly</span></div>
+        <p>Download public files</p>
+        <ul class="chips"><li>Raw IRS files<span class="q" tabindex="0" aria-label="What is Raw IRS files?">?<span class="tip" role="tooltip"><b>Every e-filed 990, as XML in monthly zips.</b> 10 to 15 GB a year. Read once, then deleted.</span></span></li><li>Census files<span class="q" tabindex="0" aria-label="What is Census files?">?<span class="tip" role="tooltip"><b>County poverty, income and population,</b> plus a ZIP to county table. Small, yearly.</span></span></li></ul>
+      </li>
+      <li class="stage">
+        <div class="stage-head"><h4>Clean + load</h4><span class="where">GitHub Actions, monthly. Tested on your Mac first</span></div>
+        <p>Pull ~40 fields from each return into rows</p>
+        <ul class="chips"><li>ETL scripts<span class="q" tabindex="0" aria-label="What is ETL scripts?">?<span class="tip" role="tooltip"><b>Python that reads each return</b> and writes the fields we keep into tables. One script per source.</span></span></li><li>Postgres staging<span class="q" tabindex="0" aria-label="What is Postgres staging?">?<span class="tip" role="tooltip"><b>A copy of the database on your Mac.</b> Test a new load here first, then copy it to Supabase. Nothing public reads it.</span></span></li></ul>
+      </li>
+      <li class="stage">
+        <div class="stage-head"><h4>Embed</h4><span class="where">OpenAI or Voyage servers, not ours</span></div>
+        <p>Turn each mission into 512 numbers. The ETL sends filings, the apps send questions.</p>
+        <ul class="chips"><li>Embedding API<span class="q" tabindex="0" aria-label="What is Embedding API?">?<span class="tip" role="tooltip"><b>Runs on OpenAI or Voyage servers.</b> We send text over the internet and get 512 numbers back. Similar missions get similar numbers. Nothing to install or keep running.</span></span></li></ul>
+      </li>
+      <li class="stage db">
+        <div class="stage-head"><h4>Store</h4><span class="where">Supabase</span></div>
+        <p>One shared database: tables and vectors together. Every app reads it.</p>
+        <ul class="chips"><li>Postgres + pgvector<span class="q" tabindex="0" aria-label="What is Postgres + pgvector?">?<span class="tip" role="tooltip"><b>Tables and vectors in one database.</b> pgvector adds a vector column, so one query can mix "similar mission" with "in Ohio, under $1M". No separate vector database.</span></span></li><li>Auth<span class="q" tabindex="0" aria-label="What is Auth?">?<span class="tip" role="tooltip"><b>Supabase's login system,</b> for accounts and saved searches.</span></span></li><li>Daily backups<span class="q" tabindex="0" aria-label="What is Daily backups?">?<span class="tip" role="tooltip"><b>A full copy each day,</b> to restore after a bad load or a mistake.</span></span></li></ul>
+      </li>
+      <li class="stage">
+        <div class="stage-head"><h4>Serve</h4><span class="where">Vercel</span></div>
+        <p>Apps and API answer searches</p>
+        <ul class="chips"><li>NomBot<span class="q" tabindex="0" aria-label="What is NomBot?">?<span class="tip" role="tooltip"><b>Search for nonprofits</b> by mission, place and size.</span></span></li><li>GrantRadar<span class="q" tabindex="0" aria-label="What is GrantRadar?">?<span class="tip" role="tooltip"><b>Find funders</b> that paid groups like yours.</span></span></li><li>Public API <code>/api/v1/search</code><span class="q" tabindex="0" aria-label="What is Public API /api/v1/search?">?<span class="tip" role="tooltip"><b>JSON search anyone can call,</b> limited to 60 requests a minute. The only public door. The database stays private.</span></span></li><li>Claude API<span class="q" tabindex="0" aria-label="What is Claude API?">?<span class="tip" role="tooltip"><b>Anthropic's model.</b> Reads the question, scores results, writes explanations.</span></span></li></ul>
+      </li>
+      <li class="stage">
+        <div class="stage-head"><h4>Use</h4></div>
+        <p>People and partner apps</p>
+        <ul class="chips"><li>Donors, nonprofits, developers<span class="q" tabindex="0" aria-label="What is Donors, nonprofits, developers?">?<span class="tip" role="tooltip"><b>Reach the apps and the public API.</b> Never the database.</span></span></li><li>Philanthro Map<span class="q" tabindex="0" aria-label="What is Philanthro Map?">?<span class="tip" role="tooltip"><b>Tyler's map.</b> Reads the database directly with a read-only role: a login that can read but not change data.</span></span></li></ul>
+      </li>
+    </ol>
+    <div class="side">
+      <div><h4>Code</h4><ul class="chips"><li>GitHub<span class="q" tabindex="0" aria-label="What is GitHub?">?<span class="tip" role="tooltip"><b>Holds all code and migrations</b> (numbered SQL files that change tables the same way everywhere). Each push deploys the apps to Vercel.</span></span></li><li>Secrets<span class="q" tabindex="0" aria-label="What is Secrets?">?<span class="tip" role="tooltip"><b>API keys, stored encrypted</b> in GitHub and Vercel. Never in the code.</span></span></li></ul></div>
+      <div><h4>Your Mac</h4><ul class="chips"><li>Dev servers<span class="q" tabindex="0" aria-label="What is Dev servers?">?<span class="tip" role="tooltip"><b>The apps running at localhost</b> while you build and test.</span></span></li><li>Experiments<span class="q" tabindex="0" aria-label="What is Experiments?">?<span class="tip" role="tooltip"><b>Free GPU embedding and trial loads,</b> before anything reaches Supabase.</span></span></li></ul></div>
+    </div>
+    <ul>
+      <li><b>APIs:</b> only <code>/api/v1/search</code> is public (rate-limited). The database is never public.</li>
+      <li><b>Stay small:</b> vectors for the newest filing per org only. <code>halfvec</code> halves their size.</li>
+      <li><b>Cost:</b> Supabase with 4 to 8 GB of memory, ~$60 to $110 a month. ETL on GitHub Actions, free.</li>
+    </ul>
+
+    <h3>How big it gets</h3>
+    <div class="table">
+      <table>
+        <thead><tr><th></th><th>Today</th><th>Worst case</th></tr></thead>
+        <tbody>
+          <tr><td>Vectors</td><td class="n">514K</td><td class="n">~2M (every org)</td></tr>
+          <tr><td>Vector index</td><td class="n">~1.5 GB</td><td class="n">~3 GB (<code>halfvec</code>)</td></tr>
+          <tr><td>Database</td><td class="n">11 GB</td><td class="n">~30 GB (10 IRS years)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="meta">pgvector is comfortable to ~10M vectors on one server, 5x our worst case. The limit is memory: the index should fit in RAM. Split <code>grants</code> by year past ~20M rows.</p>
+
+    <h3>Where the embedding model runs</h3>
+    <div class="table">
+      <table>
+        <thead><tr><th>Option</th><th>Cost</th><th>Catch</th></tr></thead>
+        <tbody>
+          <tr class="pick"><td>Embedding API (OpenAI, Voyage) ✓</td><td>Pennies a month</td><td>Re-embed filings once, ~$3</td></tr>
+          <tr><td>Host nomic (Modal, Hugging Face)</td><td>~$5 to $50 a month</td><td>One more service to run</td></tr>
+          <tr><td>nomic inside the Vercel app</td><td>Free</td><td>550 MB model, slow first searches</td></tr>
+          <tr><td>Supabase built-in (gte-small)</td><td>Free</td><td>Weaker, 384 dims, schema change</td></tr>
+          <tr><td>Your Mac</td><td>Free</td><td>Must stay on and online 24/7</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="meta">Search questions need an answer in under a second, any time, from the same model as the filings. So one API for both. The Mac GPU stays for experiments.</p>
+    <h3>Steps</h3>
+    <ol class="agenda">
+      <li><h3>Pick the embedding model (eval: nomic, OpenAI 3-small, Voyage 3.5-lite)</h3></li>
+      <li><h3>Newest filing only, <code>halfvec</code></h3></li>
+      <li><h3>Supabase up, load from local</h3></li>
+      <li><h3>Point the apps at Supabase</h3></li>
+      <li><h3>Monthly ETL on GitHub Actions</h3></li>
+    </ol>
+  </section>
+  </div>
+</div>
+<script>
+(() => {
+  const tabs = [...document.querySelectorAll('[role=tab]')];
+  const show = (id, focus) => {
+    tabs.forEach(t => {
+      const on = t.id === id;
+      t.setAttribute('aria-selected', on); t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).setAttribute('aria-hidden', !on);
+    });
+    if (focus) document.getElementById(id).focus();
+    window.scrollTo({ top: 0 });
+  };
+  tabs.forEach((t, i) => {
+    t.addEventListener('click', () => show(t.id));
+    t.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      show(tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length].id, true);
+    });
+  });
+  if (location.hash === '#cloud') show('t-cloud');
+  const clamp = q => {
+    const tip = q.querySelector('.tip'); if (!tip) return;
+    tip.style.left = '-12px';
+    const r = tip.getBoundingClientRect(), over = r.right - (document.documentElement.clientWidth - 16);
+    if (over > 0) tip.style.left = (-12 - over) + 'px';
+  };
+  document.querySelectorAll('.q').forEach(q => { q.addEventListener('mouseenter', () => clamp(q)); q.addEventListener('focus', () => clamp(q)); });
+})();
+</script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: false, theme: "neutral" });
+  await mermaid.run({ querySelector: "pre.mermaid" });
+</script>
+</body>
+</html>
