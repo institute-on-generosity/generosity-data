@@ -2,7 +2,9 @@
 
 Shared IRS nonprofit data pipeline and Postgres + pgvector schema for [NomBot](https://github.com/institute-on-generosity/NomBot) and [GrantRadar](https://github.com/institute-on-generosity/GrantRadar).
 
-**Brief:** [`docs/shared-database-brief.html`](docs/shared-database-brief.html): what's loaded, what's left out, and the cloud plan (Oct 14 meeting with Philanthro Map). Download and open it in a browser; GitHub shows HTML as source.
+**Brief:** [`docs/shared-database-brief.html`](docs/shared-database-brief.html): what's loaded, what's left out, data sources, the cloud plan and insights (Oct 14 meeting with Philanthro Map). Download and open it in a browser; GitHub shows HTML as source.
+
+**Graph view:** [`docs/board-interlocks/`](docs/board-interlocks/): orgs that share board members, by state. Build its data with `python3 etl/export_interlocks.py` (git-ignored: it lists board members' names), then `python3 -m http.server -d docs/board-interlocks`.
 
 ## Local setup (proof of concept)
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- Meeting brief for Hunter + Tyler (Oct 14, 2026). Also published as a claude.ai artifact. Numbers are as of before the 2026 IRS load. -->
+<!-- Meeting brief for Hunter + Tyler (Oct 14, 2026), numbers after the IRS 2026 batches. Also published as a claude.ai artifact. -->
 <title>Shared 990 Database</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -194,6 +194,24 @@ tr.grp td { background: var(--surface); font-size: 12px; font-weight: 600; lette
   .phases > * { grid-column: 1 !important; grid-row: auto !important; }
   .ph-head:not(:first-child) { margin-top: 18px; }
 }
+.when { font-size: 12px; font-weight: 600; padding: 3px 7px; border-radius: 6px; line-height: 1; display: inline-block; }
+.when.next { background: var(--accent-tint); color: var(--accent-ink); }
+.when.later { background: var(--surface); color: var(--mute); }
+#p-src td:first-child { white-space: normal; min-width: 120px; }
+.cat { display: grid; gap: 8px; }
+.cat + .cat { margin-top: 10px; }
+.cat-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.cat-head h3 { font-size: 16px; }
+.cat-head span { font-size: 13.5px; color: var(--mute); }
+.cat table { table-layout: fixed; }
+.cat td:nth-child(1) { width: 30%; white-space: normal; }
+.cat td:nth-child(2) { width: 44%; color: var(--ink-2); }
+.cat td.acc { width: 14%; font-size: 12.5px; color: var(--mute); white-space: nowrap; }
+.cat td:nth-child(4) { width: 12%; text-align: right; white-space: nowrap; }
+.when.connected { background: var(--accent); color: var(--bg); }
+@media (max-width: 560px) { .cat td.acc { display: none; } .cat td:nth-child(1) { width: 38%; } .cat td:nth-child(2) { width: auto; } }
+#p-ins td:first-child { font-weight: 600; white-space: normal; min-width: 96px; }
+#p-ins td:first-child .when { margin-left: 6px; vertical-align: 1px; }
 </style>
 
 </head>
@@ -207,7 +225,9 @@ tr.grp td { background: var(--surface); font-size: 12px; font-weight: 600; lette
 
   <nav class="tabs" role="tablist" aria-label="Brief sections">
     <button role="tab" id="t-db" aria-controls="p-db" aria-selected="true">Database</button>
+    <button role="tab" id="t-src" aria-controls="p-src" aria-selected="false" tabindex="-1">Data sources</button>
     <button role="tab" id="t-cloud" aria-controls="p-cloud" aria-selected="false" tabindex="-1">Cloud plan</button>
+    <button role="tab" id="t-ins" aria-controls="p-ins" aria-selected="false" tabindex="-1">Insights</button>
   </nav>
 
   <div class="panel" role="tabpanel" id="p-db" aria-labelledby="t-db">
@@ -215,15 +235,15 @@ tr.grp td { background: var(--surface); font-size: 12px; font-weight: 600; lette
   <section>
     <div class="stats">
       <div class="stat"><b>1.97M</b><span>nonprofits</span></div>
-      <div class="stat"><b>513,813</b><span>990 returns</span></div>
-      <div class="stat"><b>135,407</b><span>foundations</span></div>
-      <div class="stat"><b>4.84M</b><span>grants · 3 years · $365B</span></div>
+      <div class="stat"><b>785,772</b><span>990 returns</span></div>
+      <div class="stat"><b>138,734</b><span>foundations</span></div>
+      <div class="stat"><b>5.35M</b><span>grants · 4 IRS years · $392B</span></div>
       <div class="stat"><b>3,144</b><span>counties</span></div>
-      <div class="stat"><b>11 GB</b><span>database</span></div>
+      <div class="stat"><b>14 GB</b><span>database</span></div>
     </div>
     <ul>
-      <li><b>Largest:</b> 990 text + vectors 6 GB, grants 1.9 GB, orgs 1.1 GB.</li>
-      <li><b>Raw IRS files:</b> 46 GB (13 GB zips + 33 GB unzipped). Not stored. Re-downloadable.</li>
+      <li><b>Largest:</b> 990 text + vectors 7 GB, grants 2 GB, board members 1.5 GB, orgs 1.1 GB.</li>
+      <li><b>Raw IRS files:</b> 58 GB (14 GB zips + 44 GB unzipped). Not stored. Re-downloadable.</li>
       <li><b>Why smaller:</b> we keep ~40 of ~440 values per 990, as numbers without XML tags.</li>
     </ul>
   </section>
@@ -244,22 +264,6 @@ flowchart LR
       <li><b>Plain Python + <code>psql</code>.</b> Re-runs update rows, never duplicate.</li>
       <li><b>Runs</b> by hand. Monthly on GitHub Actions after the cloud move.</li>
     </ul>
-  </section>
-
-  <section>
-    <h2>Sources</h2>
-    <p class="meta">Bulk downloads. No API keys.</p>
-    <div class="table">
-      <table>
-        <tbody>
-          <tr><td><a href="https://www.irs.gov/charities-non-profits/exempt-organizations-business-master-file-extract-eo-bmf">IRS master file</a></td><td><code>orgs</code></td></tr>
-          <tr><td><a href="https://www.irs.gov/statistics/soi-tax-stats-annual-extract-of-tax-exempt-organization-financial-data">IRS SOI extract</a></td><td><code>financials</code></td></tr>
-          <tr><td><a href="https://www.irs.gov/charities-non-profits/form-990-series-downloads">IRS 990 e-file XML</a></td><td><code>filing_text</code> · <code>filing_flag</code> · <code>funders</code> · <code>grants</code></td></tr>
-          <tr><td><a href="https://www.census.gov/programs-surveys/saipe.html">Census poverty</a> + <a href="https://www.census.gov/programs-surveys/popest.html">population</a></td><td><code>county_need</code></td></tr>
-          <tr><td><a href="https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/">Census ZIP → county</a> + <a href="https://en.wikipedia.org/wiki/List_of_Appalachian_Regional_Commission_counties">ARC</a></td><td><code>zip_regions</code></td></tr>
-        </tbody>
-      </table>
-    </div>
   </section>
 
   <section>
@@ -376,9 +380,9 @@ flowchart LR
   M --> C["Claude scores top 40"]
 </pre></div>
     <ul>
-      <li><b>Embedded:</b> mission + programs, 513,813 filings.</li>
+      <li><b>Embedded:</b> mission + programs, 785,772 filings.</li>
       <li><b>Model:</b> <span class="term" tabindex="0">nomic-embed-text-v1.5<span class="tip" role="tooltip"><b>Open-source model from Nomic AI.</b> Runs on our machine. Free, no API key. Makes 768 numbers per text. We keep the first 512, which it is trained to allow.</span></span>, local, 512 dimensions. Cloud: <span class="term" tabindex="0">OpenAI text-embedding-3-small<span class="tip" role="tooltip"><b>OpenAI's paid embedding model, via its API.</b> About $0.02 per million tokens. Returns 512 numbers directly. Nothing to run on our side.</span></span>.</li>
-      <li><b>Index:</b> <span class="term" tabindex="0">HNSW cosine<span class="tip" role="tooltip"><b>Finds the closest vectors without checking all 473,474.</b> HNSW links each vector to its near neighbors, and a search hops along those links. <b>Cosine</b> scores how alike two vectors are, here two missions.</span></span> on <code>filing_latest</code>, the newest filing per org.</li>
+      <li><b>Index:</b> <span class="term" tabindex="0">HNSW cosine<span class="tip" role="tooltip"><b>Finds the closest vectors without checking all 541,879.</b> HNSW links each vector to its near neighbors, and a search hops along those links. <b>Cosine</b> scores how alike two vectors are, here two missions.</span></span> on <code>filing_latest</code>, the newest filing per org.</li>
       <li><b>Model switch:</b> re-embeds only stale rows, via <code>embedding_model</code>.</li>
       <li><b>GrantRadar:</b> mission → 150 closest grantees → their funders.</li>
     </ul>
@@ -390,12 +394,12 @@ flowchart LR
       <h3>90% of grants map to a county</h3>
       <div class="flow">grants.recipient_zip <i>→</i> zip_regions <i>→</i> county_need</div>
       <div class="bar" role="img" aria-label="90% of grants map to a county">
-        <div class="bar-fill" style="width:90%"><span>4.36M grants</span></div>
+        <div class="bar-fill" style="width:90%"><span>4.83M grants</span></div>
         <div class="bar-rest"><span>10%</span></div>
       </div>
     </div>
     <ul>
-      <li><b>3,191</b> counties receive grants.</li>
+      <li><b>3,196</b> counties receive grants.</li>
       <li><b>52%</b> of grants stay in the funder's state.</li>
     </ul>
   </section>
@@ -403,9 +407,9 @@ flowchart LR
   <section>
     <h2>Limits</h2>
     <ul class="gotchas">
-      <li><b>Text:</b> only orgs that e-file a 990 (473,474 of 1.97M).</li>
-      <li><b>Years:</b> IRS 2023 to 2025 (tax years mostly 2022 to 2024).</li>
-      <li><b>Recipients:</b> no EIN on grants. 57% matched by name.</li>
+      <li><b>Text:</b> only orgs that e-file a 990 (541,879 of 1.97M).</li>
+      <li><b>Years:</b> IRS 2023 to 2026 (tax years mostly 2022 to 2025).</li>
+      <li><b>Recipients:</b> no EIN on grants. 56% matched by name.</li>
       <li><b>Individuals:</b> not on any 990.</li>
     </ul>
   </section>
@@ -419,6 +423,195 @@ flowchart LR
       <li><h3>What data is the map missing?</h3></li>
       <li><h3>One county map and color scale for both apps?</h3></li>
     </ol>
+  </section>
+  </div>
+
+  <div class="panel" role="tabpanel" id="p-src" aria-labelledby="t-src" aria-hidden="true">
+  <section>
+    <h2>Sources by what they bring</h2>
+    <p class="meta">14 connected · 8 next · 13 later (one source can bring several things). Names link to the API or download page. All free, terms checked before connecting.</p>
+    <div class="cat">
+      <div class="cat-head"><h3>Who exists</h3><span>Is it a real, active charity, and can gifts be deducted?</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/exempt-organizations-business-master-file-extract-eo-bmf">IRS master file</a></td><td>Name, EIN, address, charity type, ruling year</td><td class="acc">Bulk file</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/tax-exempt-organization-search-bulk-data-downloads">IRS Pub 78</a></td><td>Eligible for tax-deductible gifts</td><td class="acc">Bulk file</td><td><span class="when next">Next</span></td></tr>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/tax-exempt-organization-search-bulk-data-downloads">IRS revocations</a></td><td>Lost tax-exempt status, and when</td><td class="acc">Bulk file</td><td><span class="when next">Next</span></td></tr>
+          <tr><td><a href="https://open.gsa.gov/api/entity-api/">SAM.gov Entity API</a></td><td>Registered to receive federal money</td><td class="acc">API key</td><td><span class="when later">Later</span></td></tr>
+          <tr><td><a href="https://oag.ca.gov/charities">State charity registries</a></td><td>Registered, delinquent or suspended (CA, NY first)</td><td class="acc">Bulk file</td><td><span class="when later">Later</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>What they do</h3><span>Mission, programs and cause, for search</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/form-990-series-downloads">IRS 990 XML: Parts I, III</a></td><td>Mission and program text (embedded for search)</td><td class="acc">Bulk file</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://urbaninstitute.github.io/nccs-legacy/ntee/ntee.html">NCCS NTEE codes</a></td><td>Cause category</td><td class="acc">Lookup</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td>Claimed profiles</td><td>Programs, needs, contacts, from the nonprofit</td><td class="acc">Ours</td><td><span class="when next">Next</span></td></tr>
+          <tr><td>Org websites</td><td>New programs, events, closures</td><td class="acc">Weekly fetch</td><td><span class="when later">Later</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>Financial health</h3><span>Can it sustain its work?</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/form-990-series-downloads">IRS 990 XML: Parts I, VIII to X</a></td><td>Revenue, spending, cash, debts, 2 years</td><td class="acc">Bulk file</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://www.irs.gov/statistics/soi-tax-stats-annual-extract-of-tax-exempt-organization-financial-data">IRS SOI extract</a></td><td>Revenue, expenses, assets for orgs without e-filed XML</td><td class="acc">Bulk file</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://projects.propublica.org/nonprofits/api">ProPublica API</a></td><td>Per-org filing history, fetched live</td><td class="acc">API</td><td><span class="when connected">Connected</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>Governance and trust</h3><span>Is it well run?</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/form-990-series-downloads">IRS 990 XML: Parts IV, VI, VII</a></td><td>Board, policies, audit, insider deals, officer pay</td><td class="acc">Bulk file</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://developer.charitynavigator.org">Charity Navigator API</a></td><td>Ratings and advisories</td><td class="acc">API key</td><td><span class="when later">Later</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>Private funding</h3><span>Who funds whom</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/form-990-series-downloads">IRS 990-PF XML: Part XV</a></td><td>Every foundation grant, how to apply, deadlines</td><td class="acc">Bulk file</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/form-990-series-downloads">IRS 990 Schedule I</a></td><td>Grants by community foundations and DAF sponsors</td><td class="acc">Bulk file</td><td><span class="when next">Next</span></td></tr>
+          <tr><td><a href="https://philanthropynewsdigest.org">Philanthropy News Digest</a></td><td>New grants and programs announced</td><td class="acc">RSS</td><td><span class="when later">Later</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>Public funding</h3><span>Government money, now</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td><a href="https://www.irs.gov/charities-non-profits/form-990-series-downloads">IRS 990 XML: Part VIII 1e</a></td><td>Government grants received</td><td class="acc">Bulk file</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://api.usaspending.gov">USAspending API</a></td><td>Federal grants awarded to nonprofits, this year</td><td class="acc">API</td><td><span class="when next">Next</span></td></tr>
+          <tr><td><a href="https://www.grants.gov/api">Grants.gov API</a></td><td>Open federal grants to apply for</td><td class="acc">API</td><td><span class="when next">Next</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>Community need</h3><span>Where help is needed</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td><a href="https://www.census.gov/data/developers.html">Census SAIPE + population</a></td><td>County poverty, income, population</td><td class="acc">Bulk file</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://www.fema.gov/about/openfema/api">OpenFEMA API</a></td><td>Disaster declarations by county, real-time</td><td class="acc">API</td><td><span class="when next">Next</span></td></tr>
+          <tr><td><a href="https://www.bls.gov/developers/">BLS API</a></td><td>County unemployment, monthly</td><td class="acc">API key</td><td><span class="when later">Later</span></td></tr>
+          <tr><td><a href="https://evictionlab.org">Eviction Lab</a></td><td>Eviction filings by place</td><td class="acc">Bulk file</td><td><span class="when later">Later</span></td></tr>
+          <tr><td><a href="https://map.feedingamerica.org">Map the Meal Gap</a></td><td>Food insecurity by county</td><td class="acc">Bulk file</td><td><span class="when later">Later</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>Place</h3><span>Put every org and grant on the map</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td><a href="https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/">Census ZIP → county</a></td><td>ZIP to county</td><td class="acc">Bulk file</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://en.wikipedia.org/wiki/List_of_Appalachian_Regional_Commission_counties">ARC counties</a></td><td>Appalachia flag</td><td class="acc">Lookup</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://geocoding.geo.census.gov/geocoder/">Census Geocoder API</a></td><td>Exact address to tract, for finer maps</td><td class="acc">API</td><td><span class="when later">Later</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>Pooled and online giving</h3><span>Giving outside foundations</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td>IRS master file + SOI</td><td>145 giving circles that file their own 990</td><td class="acc">Bulk file</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://philanthropytogether.org">Philanthropy Together</a></td><td>Hosted giving circles (not on any 990)</td><td class="acc">Partner</td><td><span class="when later">Later</span></td></tr>
+          <tr><td><a href="https://www.globalgiving.org/api/">GlobalGiving API</a></td><td>Live projects and campaigns</td><td class="acc">API key</td><td><span class="when later">Later</span></td></tr>
+          <tr><td><a href="https://docs.every.org">Every.org API</a></td><td>Nonprofit profiles and fundraisers</td><td class="acc">API key</td><td><span class="when later">Later</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>News and signals</h3><span>What changed this week</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td><a href="https://www.gdeltproject.org">GDELT</a></td><td>News mentions every 15 min: programs, closures</td><td class="acc">API</td><td><span class="when later">Later</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>Expert knowledge</h3><span>Guidance to cite in answers</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td>IoG GG2026 Giving Guides</td><td>13 guides of IoG research, cited by Research Buddy</td><td class="acc">Ours</td><td><span class="when next">Next</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="cat">
+      <div class="cat-head"><h3>From our users</h3><span>What people need and do</span></div>
+      <div class="table">
+        <table>
+          <tbody>
+          <tr><td>Feedback, saved lists</td><td>Thumbs up or down per result, searches with no good answer</td><td class="acc">Ours</td><td><span class="when connected">Connected</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Keeping it fresh</h2>
+    <p><b>Four ways data arrives, each as fast as its source allows.</b> The 990 is slow by nature (filed months after a year ends, posted in monthly batches), so faster sources fill the gap.</p>
+    <div class="table">
+      <table>
+        <thead><tr><th>How</th><th>Sources</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td><b>Nightly check</b></td><td>IRS 990s, master file, Pub 78, revocations, Census</td><td>Every night, 2 AM</td></tr>
+          <tr><td><b>Frequent poll</b></td><td>FEMA hourly. USAspending, Grants.gov daily</td><td>Asks only for records changed since last time</td></tr>
+          <tr><td><b>Instant write</b></td><td>Claimed profiles, feedback, saved lists</td><td>The app writes straight to Supabase</td></tr>
+          <tr><td><b>Fetch on open</b></td><td>ProPublica org detail</td><td>When a page opens, cached 1 day</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Nightly check, step by step</h3>
+    <ol class="stages">
+      <li class="stage"><div class="stage-head"><h4>Ask: anything new?</h4><span class="where">GitHub Actions, 2 AM</span></div><p>Read each source's file date. Compare with the last one we loaded. Same date: stop, done in seconds.</p></li>
+      <li class="stage"><div class="stage-head"><h4>Load only the new records</h4></div><p>Download the new batch. Skip IDs we already have. Upserts, so a rerun never duplicates.</p></li>
+      <li class="stage"><div class="stage-head"><h4>Embed and link them</h4><span class="where">Embedding API</span></div><p>New missions get vectors. New grants get matched to nonprofits. Nothing old is redone.</p></li>
+      <li class="stage db"><div class="stage-head"><h4>Publish all at once</h4><span class="where">Supabase</span></div><p>One transaction: apps see all of it or none of it. Refresh the search views. Log the source, date and rows added.</p></li>
+      <li class="stage"><div class="stage-head"><h4>Apps show it by morning</h4><span class="where">Vercel</span></div><p>Caches clear. Pages show "Data as of" per source.</p></li>
+    </ol>
+    <p class="meta">Example: the IRS posts its September batch on a Tuesday. Wednesday 2 AM, ~40K new filings load. Wednesday morning they are searchable.</p>
+
+    <h3>Live updates on screen</h3>
+    <ul>
+      <li><b>Supabase Realtime</b> pushes new rows to open pages. A FEMA declaration shows on Philanthro Map without a reload.</li>
+      <li><b>Search</b> doesn't need push. Each search reads the latest data.</li>
+    </ul>
+
+    <h3>Safety net</h3>
+    <ul>
+      <li><b>Freshness log</b> (<code>source_updates</code>): last checked, last changed, rows added, per source.</li>
+      <li><b>Alerts:</b> email the team if a load fails, or a source is silent 45 days.</li>
+      <li><b>Undo:</b> each load is tagged, so a bad one can be rolled back.</li>
+    </ul>
   </section>
   </div>
 
@@ -499,9 +692,9 @@ flowchart LR
       <table>
         <thead><tr><th></th><th>Today</th><th>Worst case</th></tr></thead>
         <tbody>
-          <tr><td>Vectors</td><td class="n">514K</td><td class="n">~2M (every org)</td></tr>
-          <tr><td>Vector index</td><td class="n">~1.5 GB</td><td class="n">~3 GB (<code>halfvec</code>)</td></tr>
-          <tr><td>Database</td><td class="n">11 GB</td><td class="n">~30 GB (10 IRS years)</td></tr>
+          <tr><td>Vectors</td><td class="n">786K</td><td class="n">~2M (every org)</td></tr>
+          <tr><td>Vector index</td><td class="n">1.4 GB</td><td class="n">~3 GB (<code>halfvec</code>)</td></tr>
+          <tr><td>Database</td><td class="n">14 GB</td><td class="n">~30 GB (10 IRS years)</td></tr>
         </tbody>
       </table>
     </div>
@@ -531,6 +724,107 @@ flowchart LR
     </ol>
   </section>
   </div>
+  <div class="panel" role="tabpanel" id="p-ins" aria-labelledby="t-ins" aria-hidden="true">
+  <section>
+    <h2>Finding hidden patterns</h2>
+    <p><b>Goal:</b> the model finds connections across the whole philanthropic landscape. <b>Today the database is built for lookups, not discovery.</b> The raw ingredients are mostly here. The links between them are not.</p>
+    <div class="table">
+      <table>
+        <thead><tr><th>Ready</th><th>What we have</th></tr></thead>
+        <tbody>
+          <tr><td>Meaning</td><td>Mission vectors find similar orgs in different words</td></tr>
+          <tr><td>Money</td><td>5.35M grants, funder to grantee, 4 IRS years</td></tr>
+          <tr><td>Place</td><td>Orgs and grants on counties, joined to Census need</td></tr>
+          <tr><td>People</td><td>4.86M board seats at 679K orgs. Interlocks built (see below)</td></tr>
+          <tr><td>Time</td><td>225K orgs with 2+ years of filings</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>What's missing</h2>
+    <div class="table">
+      <table>
+        <thead><tr><th>Gap</th><th>Why it blocks discovery</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td>Weak links</td><td>44% of grants unlinked. New sources use other IDs (UEI) or only names</td><td>ID crosswalk: EIN, UEI, name, address</td></tr>
+          <tr><td>Hidden relationships</td><td>Who's connected to whom is buried in JSON and grant rows</td><td>Connections table: funds, shares a board member, related org, co-funded</td></tr>
+          <tr><td>One kind of vector</td><td>Can't find funders by what they actually fund</td><td>Embed grant purposes and funder profiles</td></tr>
+          <tr><td>Thin history</td><td>Trends need many years. Search keeps the newest only</td><td>Every year as a time series. Add IRS 2021 to 2022</td></tr>
+          <tr><td>No analytics layer</td><td>The model can't read 14 GB. App queries are tuned for lookups</td><td>Nightly signal tables. Read-only SQL tool for the model</td></tr>
+          <tr><td>Trust per fact</td><td>Name-matched links can be wrong</td><td>Source and confidence on every link</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Patterns it could surface</h2>
+    <ul>
+      <li><b>Board interlocks:</b> the same people on a funder's board and a grantee's.</li>
+      <li><b>Funding deserts:</b> high-need counties with few grants and few active nonprofits.</li>
+      <li><b>Co-funding clusters:</b> foundations that fund the same groups, so likely next funders for a peer.</li>
+      <li><b>Early warnings:</b> falling revenue, a lost federal award and news of layoffs, together.</li>
+      <li><b>Rising orgs:</b> fast growth, new funders and new programs in the same year.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Build order</h2>
+    <ol class="stages">
+      <li class="stage db"><div class="stage-head"><h4>Connections table</h4><span class="where">Board interlocks done, Oct 14</span></div><p>Board interlocks from officer names: 977K same-state pairs, 45K high-confidence hidden links, 13,164 foundations paying an org they share board members with. <a href="https://claude.ai/artifact/8u9Nfum4wGRhAZhHJZF2VA">Graph view</a>. Co-funding next.</p></li>
+      <li class="stage"><div class="stage-head"><h4>ID crosswalk</h4></div><p>Before USAspending and other new sources, so they link on day one.</p></li>
+      <li class="stage"><div class="stage-head"><h4>Grant-purpose vectors</h4><span class="where">Embedding API</span></div><p>Search funders by what they fund, not only by who they funded.</p></li>
+      <li class="stage"><div class="stage-head"><h4>Signal tables</h4><span class="where">Nightly</span></div><p>Deserts, clusters, trends, warnings, precomputed.</p></li>
+      <li class="stage"><div class="stage-head"><h4>Model tools</h4></div><p>Read-only SQL over the signal tables, so the model asks its own questions.</p></li>
+      <li class="stage"><div class="stage-head"><h4>LLM wiki</h4><span class="where">Model-written, on top of the database</span></div><p>Linked pages for hubs (top ~2K funders, causes, states, notable counties), each pattern found, and the Giving Guides. Each page cites its query or source. Research Buddy reads the wiki first, SQL for exact numbers.</p></li>
+    </ol>
+    <div class="table">
+      <table>
+        <thead><tr><th>Layer</th><th>Holds</th><th>Built by</th></tr></thead>
+        <tbody>
+          <tr><td>Database</td><td>Every fact: orgs, grants, money, place, people</td><td>ETL, nightly</td></tr>
+          <tr><td>Signal tables</td><td>Computed patterns: interlocks, clusters, deserts</td><td>SQL, nightly</td></tr>
+          <tr><td>Wiki</td><td>Hub and pattern pages that link to each other. Discoveries build up instead of starting over</td><td>The model, when signals change</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="meta">Not a replacement: 2M orgs can't each get a page, and numbers belong in SQL, not prose.</p>
+  </section>
+
+  <section>
+    <h2>Tools that help</h2>
+    <p class="meta">All free or nearly free. Postgres stays the single source of truth. Top 5, in order: Splink, graph algorithms, dbt, read-only MCP, BERTopic.</p>
+    <div class="table">
+      <table>
+        <tbody>
+          <tr class="grp"><td colspan="2">Link the same org across sources</td></tr>
+          <tr><td><a href="https://moj-analytical-services.github.io/splink/">Splink</a> <span class="when next">Top 5</span></td><td>Matches on name, address and city together, with a confidence score. Millions of rows on a laptop</td></tr>
+          <tr><td><a href="https://docs.anthropic.com/en/docs/build-with-claude/batch-processing">Claude Batch API</a></td><td>Settles hard leftover matches by reading both records, at half price</td></tr>
+          <tr class="grp"><td colspan="2">Find connections</td></tr>
+          <tr><td><a href="https://igraph.org">igraph / NetworkX</a> <span class="when next">Top 5</span></td><td>Clusters of funders, hidden hubs, likely next funders. Nightly, results back to Postgres</td></tr>
+          <tr><td><a href="https://neo4j.com/docs/graph-data-science/current/">Neo4j Graph Data Science</a></td><td>Same algorithms at larger scale, as a separate service</td></tr>
+          <tr><td><a href="https://age.apache.org">Apache AGE</a></td><td>Graph queries inside Postgres. Fewer parts, fewer algorithms</td></tr>
+          <tr><td><a href="https://github.com/microsoft/graphrag">Microsoft GraphRAG</a></td><td>An entity graph built from text: guides, websites, news</td></tr>
+          <tr class="grp"><td colspan="2">Find themes the IRS codes miss</td></tr>
+          <tr><td><a href="https://maartengr.github.io/BERTopic/">BERTopic</a> <span class="when next">Top 5</span></td><td>Natural cause clusters from our vectors, and how they change over time</td></tr>
+          <tr><td><a href="https://scikit-learn.org">scikit-learn</a></td><td>Unusual jumps or drops, for early warnings and rising orgs</td></tr>
+          <tr class="grp"><td colspan="2">Let the model explore safely</td></tr>
+          <tr><td><a href="https://supabase.com/docs/guides/getting-started/mcp">Postgres / Supabase MCP, read-only</a> <span class="when next">Top 5</span></td><td>Claude runs its own SQL and can't change data</td></tr>
+          <tr><td><a href="https://docs.getdbt.com">dbt</a> <span class="when next">Top 5</span></td><td>Signal tables as tested, documented SQL, so the model reads clear definitions</td></tr>
+          <tr><td><a href="https://duckdb.org">DuckDB</a></td><td>Fast heavy analysis on a copy of the data, free, on the Mac</td></tr>
+          <tr class="grp"><td colspan="2">Keep it trustworthy</td></tr>
+          <tr><td><a href="https://greatexpectations.io">dbt tests / Great Expectations</a></td><td>Catch bad loads: missing years, sudden zeros, duplicate links</td></tr>
+          <tr><td><a href="https://dagster.io">Dagster</a></td><td>Pipelines with lineage and freshness checks, if GitHub Actions gets too small</td></tr>
+          <tr class="grp"><td colspan="2">See the patterns</td></tr>
+          <tr><td><a href="https://cosmograph.app">Cosmograph</a></td><td>Millions of graph links, interactive in a browser</td></tr>
+          <tr><td><a href="https://kepler.gl">Kepler.gl</a></td><td>Large maps, such as grants flowing between counties</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  </div>
 </div>
 <script>
 (() => {
@@ -551,7 +845,8 @@ flowchart LR
       show(tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length].id, true);
     });
   });
-  if (location.hash === '#cloud') show('t-cloud');
+  const byHash = { '#cloud': 't-cloud', '#sources': 't-src', '#insights': 't-ins' };
+  if (byHash[location.hash]) show(byHash[location.hash]);
   const clamp = q => {
     const tip = q.querySelector('.tip'); if (!tip) return;
     tip.style.left = '-12px';

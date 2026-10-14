@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Board interlocks graph. Data: python3 etl/export_interlocks.py, then python3 -m http.server -d docs/board-interlocks -->
+<title>Board Interlocks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: controls bar over a network canvas, with a details panel on the right (below on phones). */
+:root {
+  --bg: #f6f7f8; --panel: #ffffff; --ink: #18202a; --ink-2: #4b5563; --mute: #7a8492; --line: #dde2e8;
+  --funder: #0e7c66; --np: #8a94a3; --paid: #c2410c; --link: rgba(60, 72, 90, .22); --hi: #18202a;
+  --display: "Newsreader", Georgia, serif;
+  --body: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11161c; --panel: #171e26; --ink: #e8edf2; --ink-2: #b4bec9; --mute: #8592a0; --line: #26303b;
+  --funder: #34c4a3; --np: #6b7685; --paid: #f59e5b; --link: rgba(190, 205, 222, .18); --hi: #e8edf2; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11161c; --panel: #171e26; --ink: #e8edf2; --ink-2: #b4bec9; --mute: #8592a0; --line: #26303b;
+  --funder: #34c4a3; --np: #6b7685; --paid: #f59e5b; --link: rgba(190, 205, 222, .18); --hi: #e8edf2; color-scheme: dark }
+
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5; padding-inline: 16px; padding-block: 20px 24px; box-sizing: border-box; }
+.app { max-width: 1240px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: grid; gap: 4px; }
+.eyebrow { font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--funder); }
+h1 { font-family: var(--display); font-weight: 600; font-size: clamp(28px, 4vw, 36px); line-height: 1.1; margin: 0; }
+.sub { margin: 0; color: var(--ink-2); max-width: 78ch; font-size: 14px; }
+
+.bar { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+select, input { font: inherit; font-size: 14px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+input { width: min(240px, 100%); }
+select:focus-visible, input:focus-visible, button:focus-visible { outline: 2px solid var(--funder); outline-offset: 1px; }
+.chip { font: inherit; font-size: 13px; color: var(--ink-2); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px 5px 9px; display: inline-flex; align-items: center; gap: 7px; cursor: pointer; line-height: 1; }
+.chip[aria-pressed="false"] { opacity: .45; }
+.chip b { font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--mute); }
+.sw { width: 14px; height: 3px; border-radius: 2px; background: var(--link); }
+.sw.paid { background: var(--paid); height: 3px; }
+.stat { margin-left: auto; font-size: 13px; color: var(--mute); font-variant-numeric: tabular-nums; }
+
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: stretch; }
+.stage { position: relative; min-width: 0; height: min(72vh, 760px); min-height: 420px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+#graph { position: absolute; inset: 0; }
+.legend { position: absolute; left: 12px; bottom: 10px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--mute); background: color-mix(in srgb, var(--panel) 85%, transparent); padding: 6px 9px; border-radius: 8px; pointer-events: none; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--mute); font-size: 14px; }
+
+aside { min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 14px 16px; display: grid; gap: 10px; align-content: start; max-height: min(72vh, 760px); min-height: 420px; overflow-y: auto; }
+aside h2 { font-family: var(--display); font-size: 21px; font-weight: 600; line-height: 1.2; margin: 0; text-wrap: balance; }
+.kicker { font-size: 11.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--mute); }
+.meta { font-size: 13px; color: var(--ink-2); margin: 0; }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.list li { border-top: 1px solid var(--line); padding: 9px 0; display: grid; gap: 3px; }
+.list button { all: unset; cursor: pointer; font-weight: 500; color: var(--ink); line-height: 1.35; }
+.list button:hover { text-decoration: underline; text-underline-offset: 2px; }
+.list button:focus-visible { outline: 2px solid var(--funder); outline-offset: 2px; border-radius: 3px; }
+.rel { font-size: 12.5px; color: var(--mute); }
+.rel .paid { color: var(--paid); font-weight: 600; }
+.people { font-size: 12.5px; color: var(--ink-2); }
+.n { font-family: var(--mono); font-size: 12.5px; }
+.note { font-size: 12.5px; color: var(--mute); margin: 0; }
+
+@media (max-width: 860px) {
+  .main { grid-template-columns: minmax(0, 1fr); }
+  .stage { height: 62vh; min-height: 360px; }
+  aside { max-height: none; min-height: 0; }
+  .stat { margin-left: 0; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+</head>
+<body>
+<div class="app">
+  <header>
+    <span class="eyebrow">IRS 990 + 990-PF board lists · 2026 IRS batches</span>
+    <h1>Board Interlocks</h1>
+    <p class="sub">Orgs in the same state that share board members. Hidden links only: sister orgs (half the board shared, or alike names) and bank-run trusts are left out. High confidence only: two or more shared people, or a foundation that paid the other org.</p>
+  </header>
+
+  <div class="bar">
+    <label class="kicker" for="state">State</label>
+    <select id="state"></select>
+    <input id="find" type="search" placeholder="Find an org in this state" list="names" autocomplete="off">
+    <datalist id="names"></datalist>
+    <div class="bar" id="kinds"></div>
+    <button class="chip" type="button" id="nets" aria-pressed="true">Networks only (3+ orgs)</button>
+    <span class="stat" id="stat"></span>
+  </div>
+
+  <div class="main">
+    <div class="stage">
+      <div id="graph"></div>
+      <div class="loading" id="loading">Loading 45,116 links…</div>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--funder)"></i>Foundation</span>
+        <span><i class="dot" style="background:var(--np)"></i>Nonprofit</span>
+        <span><i class="sw paid"></i>Foundation paid the other</span>
+        <span>Dot size: number of links</span>
+      </div>
+    </div>
+    <aside id="panel" aria-live="polite"></aside>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/force-graph@1.43.5/dist/force-graph.min.js"></script>
+<script>
+(() => {
+  const KINDS = [
+    { k: 0, label: "Foundation paid the other" },
+    { k: 1, label: "Foundation and foundation" },
+    { k: 2, label: "Foundation and nonprofit" },
+    { k: 3, label: "Nonprofit and nonprofit" },
+  ];
+  const REL = ["Paid by a shared-board foundation", "Foundation, shared board", "Shared board", "Shared board"];
+  const on = new Set([0, 1, 2, 3]);
+  let netsOnly = true;
+  const $ = (id) => document.getElementById(id);
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const money = (n) => n >= 1e9 ? `$${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `$${Math.round(n / 1e3)}K` : `$${n}`;
+  const SMALL = new Set(["of", "and", "the", "for", "in", "on", "at", "to", "a"]);
+  const nice = (s) => s === s.toUpperCase()
+    ? s.toLowerCase().replace(/\b[a-z][a-z']*/g, (w, i) => (i > 0 && SMALL.has(w)) ? w : w[0].toUpperCase() + w.slice(1)).replace(/\b(Inc|Co|Llc|Usa|Ymca|Ywca|Ii|Iii)\b/g, (w) => ({ Inc: "Inc", Co: "Co", Llc: "LLC", Usa: "USA", Ymca: "YMCA", Ywca: "YWCA", Ii: "II", Iii: "III" })[w])
+    : s;
+
+  let D, graph, view = { nodes: [], links: [] }, byId = new Map(), adj = new Map(), sel = null, hover = null;
+
+  function colors() {
+    return { funder: css("--funder"), np: css("--np"), paid: css("--paid"), link: css("--link"), hi: css("--hi"), bg: css("--panel"), mute: css("--mute") };
+  }
+  let C;
+
+  function build(state) {
+    const nodes = new Map(), links = [];
+    for (const e of D.e) {
+      const a = D.n[e[0]], b = D.n[e[1]];
+      if (a[4] !== state || !on.has(e[2])) continue;
+      for (const [i, n] of [[e[0], a], [e[1], b]]) if (!nodes.has(i)) nodes.set(i, { id: i, name: nice(n[1]), f: n[2], city: n[3], deg: 0 });
+      nodes.get(e[0]).deg++; nodes.get(e[1]).deg++;
+      links.push({ source: e[0], target: e[1], k: e[2], shared: e[3], people: e[4], amt: e[5], grants: e[6] });
+    }
+    if (netsOnly) {  // drop components of just two orgs: keep the networks
+      const root = new Map(), find = (x) => { while (root.get(x) !== x) { root.set(x, root.get(root.get(x))); x = root.get(x); } return x; };
+      for (const id of nodes.keys()) root.set(id, id);
+      for (const l of links) root.set(find(l.source), find(l.target));
+      const size = new Map();
+      for (const id of nodes.keys()) { const r = find(id); size.set(r, (size.get(r) || 0) + 1); }
+      for (const id of [...nodes.keys()]) if (size.get(find(id)) < 3) nodes.delete(id);
+      for (let i = links.length - 1; i >= 0; i--) if (!nodes.has(links[i].source)) links.splice(i, 1);
+    }
+    view = { nodes: [...nodes.values()], links };
+    byId = nodes;
+    adj = new Map();
+    for (const l of links) for (const [x, y] of [[l.source, l.target], [l.target, l.source]]) {
+      if (!adj.has(x)) adj.set(x, []);
+      adj.get(x).push({ other: y, l });
+    }
+    $("stat").textContent = `${view.nodes.length.toLocaleString()} orgs · ${links.length.toLocaleString()} links`;
+    $("names").innerHTML = view.nodes.slice().sort((a, b) => b.deg - a.deg).slice(0, 400).map((n) => `<option value="${n.name.replace(/"/g, "&quot;")}">`).join("");
+    sel = null;
+    graph.graphData(view);
+    graph.d3ReheatSimulation();
+    panel();
+  }
+
+  const idOf = (x) => (typeof x === "object" ? x.id : x);
+  const isNear = (n) => sel === null || n.id === sel || (adj.get(sel) || []).some((a) => a.other === n.id);
+
+  function panel(id = sel) {
+    const p = $("panel");
+    if (id === null) {
+      const top = view.nodes.slice().sort((a, b) => b.deg - a.deg).slice(0, 8);
+      const paid = view.links.filter((l) => l.k === 0).sort((a, b) => b.amt - a.amt).slice(0, 5);
+      p.innerHTML = `<span class="kicker">${$("state").selectedOptions[0]?.dataset.name || ""}</span>
+        <h2>Click a dot to see who it shares a board with</h2>
+        <p class="note">Or start with the most connected orgs here.</p>
+        <ul class="list">${top.map((n) => `<li><button data-id="${n.id}">${n.name}</button><span class="rel"><span class="n">${n.deg}</span> links · ${n.f ? "Foundation" : "Nonprofit"}${n.city ? " · " + n.city : ""}</span></li>`).join("")}</ul>
+        ${paid.length ? `<span class="kicker">Largest grants between shared boards</span>
+        <ul class="list">${paid.map((l) => { const f = byId.get(idOf(l.source)), g = byId.get(idOf(l.target)); return `<li><button data-id="${f.id}">${f.name}</button><span class="rel"><span class="paid">${money(l.amt)}</span> · ${l.grants} grant${l.grants === 1 ? "" : "s"} with ${g.name}</span><span class="people">${l.people}</span></li>`; }).join("")}</ul>` : ""}`;
+    } else {
+      const n = byId.get(id), links = (adj.get(id) || []).slice().sort((a, b) => (a.l.k - b.l.k) || (b.l.amt - a.l.amt) || (b.l.shared - a.l.shared));
+      p.innerHTML = `<span class="kicker">${n.f ? "Foundation" : "Nonprofit"}${n.city ? " · " + n.city : ""}</span>
+        <h2>${n.name}</h2>
+        <p class="meta">${links.length} link${links.length === 1 ? "" : "s"} through shared board members. <button class="chip" id="clear" type="button">Show all</button></p>
+        <ul class="list">${links.map(({ other, l }) => { const o = byId.get(other); return `<li><button data-id="${o.id}">${o.name}</button>
+          <span class="rel">${l.k === 0 ? `<span class="paid">${money(l.amt)} in ${l.grants} grant${l.grants === 1 ? "" : "s"}</span> · ` : ""}${l.shared} shared · ${o.f ? "Foundation" : "Nonprofit"}</span>
+          <span class="people">${l.people}</span></li>`; }).join("")}</ul>`;
+      $("clear").onclick = () => select(null);
+    }
+    p.querySelectorAll("button[data-id]").forEach((b) => b.onclick = () => select(+b.dataset.id, true));
+  }
+
+  function select(id, fly) {
+    sel = id;
+    panel();
+    graph.nodeColor(graph.nodeColor());
+    if (id !== null && fly) {
+      const n = byId.get(id);
+      if (n && n.x !== undefined) { graph.centerAt(n.x, n.y, 600); graph.zoom(Math.max(graph.zoom(), 3), 600); }
+    }
+  }
+
+  function initGraph() {
+    C = colors();
+    graph = ForceGraph()($("graph"))
+      .backgroundColor(C.bg)
+      .nodeId("id")
+      .nodeVal((n) => 1 + Math.sqrt(n.deg) * 1.6)
+      .nodeRelSize(3.2)
+      .nodeLabel((n) => `${n.name} · ${n.deg} link${n.deg === 1 ? "" : "s"}`)
+      .nodeColor((n) => {
+        const base = n.f ? C.funder : C.np;
+        return isNear(n) ? base : base + "33";
+      })
+      .linkColor((l) => {
+        const near = sel === null || idOf(l.source) === sel || idOf(l.target) === sel;
+        if (!near) return "rgba(128,128,128,.05)";
+        return l.k === 0 ? C.paid : (sel !== null ? C.hi : C.link);
+      })
+      .linkWidth((l) => (l.k === 0 ? 1.6 : 0.6) + (sel !== null && (idOf(l.source) === sel || idOf(l.target) === sel) ? 0.8 : 0))
+      .onNodeClick((n) => select(n.id === sel ? null : n.id, false))
+      .onBackgroundClick(() => select(null))
+      .cooldownTime(9000)
+      .d3AlphaDecay(0.035)
+      .d3VelocityDecay(0.35);
+    graph.d3Force("charge").strength(-14);
+    graph.d3Force("link").distance(18);
+    const fit = () => { const r = $("graph").getBoundingClientRect(); graph.width(r.width).height(r.height); };
+    fit();
+    new ResizeObserver(fit).observe($("graph"));
+    graph.onEngineStop(() => { if (sel === null) graph.zoomToFit(500, 30); });
+  }
+
+  function retheme() {
+    C = colors();
+    if (graph) { graph.backgroundColor(C.bg); graph.nodeColor(graph.nodeColor()); }
+  }
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", retheme);
+  new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  fetch("interlocks.json").then((r) => r.json()).then((d) => {
+    D = d;
+    const per = new Map(), kindCount = [0, 0, 0, 0];
+    for (const e of D.e) { const s = D.n[e[0]][4]; per.set(s, (per.get(s) || 0) + 1); kindCount[e[2]]++; }
+    const states = [...per].sort((a, b) => b[1] - a[1]);
+    $("state").innerHTML = states.map(([s, c]) => `<option value="${s}" data-name="${s}">${s} · ${c.toLocaleString()} links</option>`).join("");
+    $("state").value = states[0][0];
+    $("kinds").innerHTML = KINDS.map(({ k, label }) => `<button class="chip" type="button" aria-pressed="true" data-k="${k}"><i class="${k === 0 ? "sw paid" : "sw"}"></i>${label} <b>${kindCount[k].toLocaleString()}</b></button>`).join("");
+    $("kinds").querySelectorAll(".chip").forEach((b) => b.onclick = () => {
+      const k = +b.dataset.k, was = on.has(k);
+      if (was && on.size === 1) return;
+      was ? on.delete(k) : on.add(k);
+      b.setAttribute("aria-pressed", String(!was));
+      build($("state").value);
+    });
+    $("nets").onclick = () => { netsOnly = !netsOnly; $("nets").setAttribute("aria-pressed", String(netsOnly)); build($("state").value); };
+    $("state").onchange = () => { $("find").value = ""; build($("state").value); };
+    $("find").onchange = () => {
+      const q = $("find").value.trim().toLowerCase();
+      if (!q) return;
+      const hit = view.nodes.find((n) => n.name.toLowerCase() === q) || view.nodes.find((n) => n.name.toLowerCase().includes(q));
+      if (hit) select(hit.id, true);
+    };
+    $("loading").hidden = true;
+    initGraph();
+    build($("state").value);
+  }).catch(() => { $("loading").textContent = "Couldn't load the link data. Reload the page to try again."; });
+})();
+</script>
+</body>
+</html>
