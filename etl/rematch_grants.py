@@ -14,11 +14,14 @@ Rules (US recipients only; placeholders, individuals and foreign addresses are s
             in the same city or ZIP (generic names like "Mosaic" repeat across a state)
   zip       same ZIP code, name similarity >= 0.7 (name or secondary name), clearly the best in that ZIP,
             "Foundation" in both names or neither, no PTA/PTO/honor-society/booster chapters unless named
+  contains  (proposed, not used: 78-83% right on fresh samples) the grant's name whole inside one IRS name in
+            the same city (--contains). Longer IRS names are often a separate entity: "X HIGH SCHOOL PTSA",
+            "FRIENDS OF X", "X VEBA TRUST". Word guards fit one sample (98%) and failed the next (83%)
   national  (proposed, not used: 63% right) exact name unique in the country, 3+ words
 Candidates are built loosely (zip from 0.5, alias without a name check); ACCEPT holds the graded rules.
 Links carry match_method = rule name and match_score = similarity (1 for override / alias / national).
 """
-import json, os, subprocess, sys
+import json, os, subprocess, sys, time
 
 DB = os.environ.get("DATABASE_URL", "postgresql:///nombot")
 OUT = os.path.join(os.path.dirname(__file__), "..", "data", "rematch")
@@ -96,10 +99,61 @@ def candidates():
 ACCEPT = """(
   (c.method = 'override')
   OR (c.method = 'alias' AND similarity(o.n, u.n) >= 0.3 AND (o.city = u.city OR o.zip = u.zip))
+  OR (c.method = 'contains' AND (u.n ~* 'FOUNDATION') = (o.n ~* 'FOUNDATION')
+      -- the grant name is at least 0.4 of the IRS name's words, and the IRS name's extra words don't mark
+      -- a separate entity ("FRIENDS OF X", "X VEBA TRUST", "X RELIEF ASSOC", "X LEGACY CIRCLE")
+      AND cardinality(regexp_split_to_array(u.n, '\\s+'))::real / cardinality(regexp_split_to_array(o.n, '\\s+')) >= 0.4
+      AND NOT EXISTS (SELECT 1 FROM unnest(regexp_split_to_array(o.n, '\\s+')) w
+                      WHERE w <> ALL (regexp_split_to_array(u.n, '\\s+'))
+                        AND upper(w) IN ('FRIENDS','TRUST','VEBA','EMPLOYEE','EMPLOYEES','BOOSTER','BOOSTERS','AUXILIARY','ALUMNI',
+                          'DEPARTMENT','DEPT','POST','CHAPTER','GUILD','PTA','PTO','PARENT','PARENTS','CHARITIES','FUND','ENDOWMENT',
+                          'SUPPORT','SUPPORTING','COUNCIL','LODGE','LADIES','AUX','ASSN','ASSOCIATION','ASSOC','CLUB','SOCIETY','CORP',
+                          'HOLDING','HOLDINGS','PROPERTIES','HOUSING','RETIREMENT','PENSION','BENEFIT','BENEFITS','RELIEF','LEGACY',
+                          'CIRCLE','MORTGAGE','SOLUTIONS','AFFILIATE')))
   OR (c.method = 'zip' AND c.score >= 0.7
       AND (u.n ~* 'FOUNDATION') = (o.n ~* 'FOUNDATION')
       AND NOT (o.n ~* '\\m(PTA|PTO|PSI CHI|HONOR SOCIETY|BOOSTER|ALUMNI|PARENT)' AND u.n !~* '\\m(PTA|PTO|PSI CHI|HONOR SOCIETY|BOOSTER|ALUMNI|PARENT)'))
 )"""
+
+# contains: the grant's name sits whole inside one IRS name in the same city ("UNION COLLEGE" in "TRUSTEES OF
+# UNION COLLEGE", "UNITED WAY" in Saginaw -> "UNITED WAY SAGINAW COUNTY"). 8 sessions split the names by hash.
+WORKERS = 8
+REFRESH_U = f"""
+SET work_mem = '1GB';
+DELETE FROM rm_cand WHERE method = 'contains';
+DROP TABLE IF EXISTS rm_u_old; ALTER TABLE rm_u RENAME TO rm_u_old;
+CREATE UNLOGGED TABLE rm_u AS
+SELECT org_norm(recipient_name) AS n, min(recipient_name) AS raw, upper(coalesce(recipient_city, '')) AS city,
+       recipient_state AS st, left(coalesce(recipient_zip, ''), 5) AS zip, count(*)::int AS grants, coalesce(sum(amount), 0) AS amt
+FROM grants
+WHERE recipient_ein IS NULL AND recipient_state ~ {US} AND recipient_name !~* {SKIP}
+GROUP BY 1, 3, 4, 5;
+DELETE FROM rm_u WHERE length(n) < 4;
+CREATE INDEX ON rm_u (zip); CREATE INDEX ON rm_u (st, n); ANALYZE rm_u; DROP TABLE rm_u_old;
+CREATE INDEX IF NOT EXISTS rm_o_st_trgm ON rm_o USING gin (st, n gin_trgm_ops);
+"""
+CONTAINS = """
+SET pg_trgm.word_similarity_threshold = 0.9;
+INSERT INTO rm_cand
+SELECT u.n, u.city, u.st, u.zip, min(o.ein), 'contains', 1
+FROM rm_u u JOIN rm_o o ON o.st = u.st AND u.n <% o.n
+WHERE abs(hashtext(u.n)) % {workers} = {k} AND o.city = u.city
+  AND array_length(regexp_split_to_array(u.n, '\\s+'), 1) >= 2 AND length(u.n) >= 8
+  AND (' ' || o.n || ' ') LIKE ('% ' || u.n || ' %') AND o.n <> u.n
+GROUP BY u.n, u.city, u.st, u.zip HAVING count(DISTINCT o.ein) = 1;
+"""
+
+def contains():
+    t0 = time.time()
+    psql(REFRESH_U)
+    print(f"unmatched names refreshed ({time.time() - t0:.0f}s)", flush=True)
+    procs = [subprocess.Popen(["psql", DB, "-v", "ON_ERROR_STOP=1", "-q"], stdin=subprocess.PIPE, text=True, stderr=subprocess.PIPE)
+             for _ in range(WORKERS)]
+    for k, p in enumerate(procs):
+        p.stdin.write(CONTAINS.format(workers=WORKERS, k=k)); p.stdin.close()
+    errs = [p.stderr.read() for p in procs if p.wait()]
+    if errs: sys.exit(f"psql failed: {errs[0][:800]}")
+    print(psql("SELECT 'contains: ' || count(*) || ' names' FROM rm_cand WHERE method = 'contains'") + f" ({time.time() - t0:.0f}s)")
 
 def sample(k):
     os.makedirs(OUT, exist_ok=True)
@@ -117,7 +171,7 @@ def sample(k):
     print(f"wrote {path}")
 
 def apply(methods):
-    order = ["override", "alias", "zip", "national"]
+    order = ["override", "alias", "zip", "contains", "national"]
     chosen = [m for m in order if m in methods]
     psql(f"""
 SET work_mem = '1GB';
@@ -137,5 +191,6 @@ WHERE g.recipient_ein IS NULL AND g.recipient_state = p.st AND org_norm(g.recipi
 if __name__ == "__main__":
     args = dict(a.lstrip("-").split("=", 1) if "=" in a else (a.lstrip("-"), "") for a in sys.argv[1:])
     if "candidates" in args: candidates()
+    if "contains" in args: contains()
     if "sample" in args: sample(int(args["sample"] or 60))
     if "apply" in args: apply(args["apply"].split(","))
