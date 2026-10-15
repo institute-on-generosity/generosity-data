@@ -363,6 +363,7 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 | `grant_unlinked` | Grading | Links removed after grading: grant, old EIN, method, reason |
 | `giving_circles` (view) | IRS master file + SOI | Giving circles that are their own nonprofit, found by name: Impact 100, 100 Who Care, women's funds (only those paying $10K+ in grants), "giving circle"; grants paid (990 Part IX line 1), website. 145 in 38 states. Hosted circles don't file, so they're missing |
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
+| `insights` | `etl/mine_insights.py` | Verified patterns for NomBot's Insights tab: headline, summary, Vega-Lite chart (data inline), method, caveats, sources, the SQL that reproduces it, CSV rows, org EINs, score, `verified` |
 
 ## Status
 - [x] Schema + migration runner
@@ -381,6 +382,26 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 - [x] Newest-record views + vector index on them (migration 015, `db/refresh.sql`); `btree_gin` for state-scoped fuzzy matching (016); funder × purpose sums for grant types (017)
 - [x] **IRS 2026 batches (Oct 14)**: 785,772 filings for 541,879 orgs (452,462 websites); 138,734 foundations, 5,348,919 grants over 4 IRS years (tax years mostly 2022–2025, $392B); 56% linked (85,127 foundations fund a linked org; 49% of linked grants stay in the funder's state)
 - [x] **Board interlocks (migration 018, `etl/load_board.py`)**: 4,859,408 board seats at 679,042 orgs; 977,088 same-state org pairs sharing a board member: 858,688 hidden links (45,116 high confidence), the rest sister orgs or bank trusts; 13,164 pairs where a foundation pays an org it shares board members with (9,213 hidden)
+- [x] **Insights (migration 025, `etl/mine_insights.py`)**: 32 verified patterns in 6 sections for NomBot's Insights tab, refreshed by one command
+
+## Insights
+
+Precomputed, verified patterns for NomBot's **Insights** tab (audience: philanthropic researchers and advisors). Table `insights` (migration 025), written by `etl/mine_insights.py`.
+
+| Section | Insights | Examples |
+|---|---|---|
+| **funding-gaps** | 5 | child care reach, state and county $ per resident, poverty fifths, Appalachia |
+| **rising-fading** | 5 | new charities by year and cause, disaster charities, cause $ trends, grants to grantmakers |
+| **money-flows** | 5 | pharma patient assistance, foundation-to-foundation, out-of-state reliance, concentration, net exporters |
+| **track-record** | 6 | invite-only, general support, payout, one-grantee foundations, audits, renewal |
+| **affiliations** | 5 | board-linked giving (high confidence only), by cause, insider deals, family ties, network density |
+| **financial-stress** | 6 | government-dependent + thin cash, thin cash by cause, deficits, single funder, negative net assets |
+
+- **One insight = one function:** SQL (stored in `query`), an independent recount, a Vega-Lite v5 chart, text built from the numbers. No figure is hard-coded.
+- **Verified:** `verified = true` only if the recount agrees and samples are large enough. Weak findings are dropped from the code, not stored.
+- **Shared rules:** grant years 2022–24; no individuals, placeholders, foreign or private-foundation recipients in dollar totals; live grant link rate in `caveats`.
+- **Refresh** (nightly, after `db/refresh.sql`): `python3 etl/mine_insights.py` (~6 min). Updates rows by slug, moves `refreshed_at`, deletes retired slugs. `--dry` prints only, `--only slug,slug` runs some.
+- **NTEE labels:** `etl/ntee_codes.csv` (NCCS definitions).
 
 ## Gotchas
 - 990 XML batches use **Deflate64**: Python's `zipfile` can't read them; `unzip` can.
@@ -407,6 +428,7 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 
   After: **63.4% of grants linked, 64.6% of linkable, 55.1% of dollars**.
 - `grants.recipient_kind` (migration 023) marks grants that can never link: foreign 81,628, placeholder 13,998, individual 2,346 (few, but $110B). Health report shows linked of all and of linkable.
+- Migration 024 moves the rules into `recipient_kind_of(name, state)` (re-applied by `load_grants.py` after every match) and adds HIPAA notes, "N recipients/students", "ATCH 4", "vials of … distributed": +2,721 grants flagged ($10.8B), 97% right on 120 graded. Placeholder 16,577, individual 2,488.
 - Unmatched grants by reason (Oct 14): 47% of unmatched dollars are US organizations not matched; 32% placeholders ("see statement", HIPAA notes), 10% foreign, 8% individuals (patient programs), 3% government or churches.
 - Unmatched linkable grants by size (Oct 15, after the exact fix): **$1M+ 7,303 grants, $34.5B** (52% of unmatched dollars); $100K–1M 78,134, $17.5B; $10K–100K 458,961, $11.9B; under $10K 1.32M, $2.8B. Top 100 names hold $21B: unflagged placeholders ("ATCH 4", HIPAA notes, "vials of … distributed": 31 grants, $5.2B), donor-advised fund sponsors filed under another state (Fidelity, Schwab, Goldman Sachs: 4,109 grants, $4.9B) and big universities/hospitals under public names (UCSF Foundation, Mass General, University of Michigan).
 - Board interlocks match people by first + last name within a state (`person_key()`), skipping names on more than 8 boards there; one shared name alone is low confidence. Graded Oct 15 (120 high, 40 medium, 40 low `link` pairs, by reading names, titles, cities): **high ~100%** same person (2+ shared names, or a grant between them), **medium ~90%**, **low ~53%** (common names in different towns: Brian Johnson, Norma Garcia). `person_key()` bugs: Jr/Sr dropped (Pat Becker Jr vs Sr), apostrophes split names (D'Albert → Albert), credentials and "Deceased" kept as last names ("KIM LCSW", "MARK DECEASED"). Nonprofit boards come from `filing_flag.people`, which keeps the 25 best-paid people per filing, so very large boards are cut short.

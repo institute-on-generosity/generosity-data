@@ -164,6 +164,10 @@ CREATE INDEX ON match_r (st, n, city); ANALYZE match_gs;
 UPDATE grants g SET recipient_ein = r.ein, match_score = r.score, match_method = r.method
 FROM match_gs gs JOIN match_r r USING (n, city, st) WHERE r.ein IS NOT NULL AND g.id = gs.id;
 DROP TABLE match_o, match_gs, match_r, match_f;
+-- never-linkable grants: foreign, individual, placeholder (migration 024)
+UPDATE grants SET recipient_kind = recipient_kind_of(recipient_name, recipient_state)
+WHERE recipient_ein IS NULL AND recipient_entity IS NULL AND recipient_kind IS NULL
+  AND recipient_kind_of(recipient_name, recipient_state) IS NOT NULL;
 """
 
 print = functools.partial(print, flush=True)  # progress shows up when piped to a log
