@@ -1,6 +1,6 @@
 # Database health
 
-*Generated 2026-10-14 16:40 PDT by `etl/db_health.py`. Database: 14 GB.*
+*Generated 2026-10-14 20:22 PDT by `etl/db_health.py`. Database: 14 GB.*
 
 ## Checks
 
@@ -28,7 +28,14 @@
 
 - Newest 990 loaded: object id `202642399349301964` (IRS batch year 2026)
 - Filings by tax year: 2025: 162,042, 2024: 490,916, 2023: 126,047, 2022: 6,718, 2021: 49
-- Latest migrations: `018_board_interlocks.sql` (2026-10-14), `017_funder_purposes.sql` (2026-10-13), `016_btree_gin.sql` (2026-10-13), `015_latest_views.sql` (2026-10-13), `014_grants_years.sql` (2026-10-13)
+- Latest migrations: `020_match_aliases.sql` (2026-10-14), `019_news_policy.sql` (2026-10-14), `018_board_interlocks.sql` (2026-10-14), `017_funder_purposes.sql` (2026-10-13), `016_btree_gin.sql` (2026-10-13)
+
+Latest run per live source (`source_updates`):
+
+| Source | Last run | Rows added | Newest item | Note |
+|---|---|---|---|---|
+| congress | 2026-10-14 19:39 | 0 | 2026-10-15 | congress 119, fetched 19649 of 19649 |
+| federal_register | 2026-10-14 19:06 | 24,945 | 2026-10-14 | fetched 24945 since 2025-10-14 |
 
 ## Tables
 
@@ -38,18 +45,26 @@
 | `filing_text` | 785,789 | 3510 MB | Mission and programs per 990, with vectors |
 | `grants` | 5,325,386 | 1954 MB | Every 990-PF grant, linked to recipients by name |
 | `board_members` | 4,859,408 | 1473 MB | Board seats from 990 Part VII and 990-PF officers |
-| `orgs` | 1,966,368 | 1088 MB | Every exempt organization (IRS master file) |
+| `orgs` | 1,972,446 | 1138 MB | Every exempt organization (IRS master file) |
 | `financials` | 538,959 | 928 MB | Revenue, expenses, assets by year (IRS SOI) |
 | `filing_flag` | 785,862 | 894 MB | Diligence fields per 990: finances, board, policies, officers |
+| `rm_o` | 1,972,852 | 475 MB |  |
 | `board_interlocks` (view) | 977,088 | 192 MB | View: org pairs that share board members |
+| `rm_u` | 958,254 | 152 MB |  |
 | `funder_purposes` (view) | 983,503 | 110 MB | View: grant purposes per funder |
 | `flag_latest` (view) | 541,879 | 58 MB | View: newest diligence fields per org |
 | `financials_latest` (view) | 498,656 | 56 MB | View: newest financials per org |
+| `federal_register_docs` | 24,945 | 37 MB | Federal Register rules, notices, funding notices |
 | `funders` | 138,734 | 34 MB | Private foundations, newest 990-PF |
+| `congress_bills` | 19,611 | 27 MB | Bills in the current Congress (Congress.gov) |
 | `zip_regions` | 34,236 | 3048 kB | ZIP to county, Appalachia flag |
+| `rm_cand` | 11,627 | 1088 kB |  |
 | `county_need` | 3,145 | 872 kB | County poverty, income, population (Census) |
 | `soi_fields` | 499 | 216 kB |  |
 | `feedback` | 0 | 64 kB | Thumbs up or down from NomBot users |
+| `source_updates` | 0 | 48 kB | Freshness log: one row per loader run |
+| `news_articles` | 0 | 40 kB | GDELT news on philanthropy and nonprofits |
 | `schema_migrations` | 0 | 32 kB |  |
+| `grant_match_overrides` | 0 | 16 kB |  |
 
 Row counts for tables come from Postgres statistics (refreshed by ANALYZE), so they can lag a load slightly; the counts above are exact.

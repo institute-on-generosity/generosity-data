@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- Meeting brief for Hunter + Tyler (Oct 14, 2026), numbers after the IRS 2026 batches. Also published as a claude.ai artifact. -->
+<!-- Meeting brief for Hunter + Tyler (Oct 14, 2026), kept current. Also published as a claude.ai artifact. -->
 <title>Shared 990 Database</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -429,7 +429,7 @@ flowchart LR
   <div class="panel" role="tabpanel" id="p-src" aria-labelledby="t-src" aria-hidden="true">
   <section>
     <h2>Sources by what they bring</h2>
-    <p class="meta">14 connected · 11 next · 15 later (one source can bring several things). Names link to the API or download page. All free, terms checked before connecting.</p>
+    <p class="meta">17 connected · 8 next · 15 later (one source can bring several things). Names link to the API or download page. All free, terms checked before connecting.</p>
     <div class="cat">
       <div class="cat-head"><h3>Who exists</h3><span>Is it a real, active charity, and can gifts be deducted?</span></div>
       <div class="table">
@@ -509,8 +509,8 @@ flowchart LR
       <div class="table">
         <table>
           <tbody>
-          <tr><td><a href="https://api.congress.gov">Congress.gov API</a></td><td>Bills moving through Congress, by subject</td><td class="acc">API key</td><td><span class="when next">Next</span></td></tr>
-          <tr><td><a href="https://www.federalregister.gov/developers/documentation/api/v1">Federal Register API</a></td><td>New federal rules and grant notices, daily</td><td class="acc">API</td><td><span class="when next">Next</span></td></tr>
+          <tr><td><a href="https://api.congress.gov">Congress.gov API</a></td><td>Every bill in the current Congress (19,611), refreshed by last update</td><td class="acc">API key</td><td><span class="when connected">Connected</span></td></tr>
+          <tr><td><a href="https://www.federalregister.gov/developers/documentation/api/v1">Federal Register API</a></td><td>New federal rules and grant notices, daily (24,945 from the past year, 78 funding notices)</td><td class="acc">API</td><td><span class="when connected">Connected</span></td></tr>
           <tr><td><a href="https://electionlab.mit.edu/data">County election results</a></td><td>Vote share by county, for issue donors in a midterm year</td><td class="acc">Bulk file</td><td><span class="when later">Later</span></td></tr>
           </tbody>
         </table>
@@ -560,7 +560,7 @@ flowchart LR
       <div class="table">
         <table>
           <tbody>
-          <tr><td><a href="https://www.gdeltproject.org">GDELT</a></td><td>News mentions every 15 min: programs, closures</td><td class="acc">API</td><td><span class="when next">Next</span></td></tr>
+          <tr><td><a href="https://www.gdeltproject.org">GDELT</a></td><td>News on philanthropy and nonprofits, 6 topics, US English</td><td class="acc">API</td><td><span class="when connected">Connected</span></td></tr>
           </tbody>
         </table>
       </div>

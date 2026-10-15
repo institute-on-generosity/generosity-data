@@ -322,6 +322,9 @@ for y in 2025 2024 2023; do YEAR=$y TYPES=990PF etl/fetch_990_xml.sh; done  # ev
 python3 etl/load_grants.py        # GrantRadar: funders + grants (Part XV), recipients linked to orgs (~25 min)
 python3 etl/load_grants.py --match-only   # relink recipients only (e.g. after loading more states; national ~1.5 h on 8 workers)
 python3 etl/load_board.py         # board members (990 Part VII, 990-PF officers) + board interlocks (~15 min)
+python3 etl/load_federal_register.py   # Federal Register rules + notices, incl. funding notices (first run: past year, ~3 min)
+python3 etl/load_gdelt.py --days=30    # GDELT news on philanthropy + nonprofits (~3 min per 10 days; then run with no flag)
+CONGRESS_API_KEY=... python3 etl/load_congress.py   # current Congress bills (free key: api.congress.gov/sign-up; resumes if cut off)
 python3 etl/load_search_index.py  # optional: all orgs into a local OpenSearch for NomBot's `npm run bench -- --bm25` (~2 min; brew install opensearch)
 psql nombot -f db/refresh.sql      # rebuild the newest-record views, vector index, interlocks after any load (~5 min)
 ```
@@ -347,6 +350,10 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 | `grants` | IRS 990-PF Part XV 3a | Each grant paid, every loaded year: recipient name/address, amount, purpose, `tax_year`, `object_id` of its return (one return per foundation per year, the newest filed); `recipient_ein` links to `orgs` with `match_score` + `match_method` (exact, exact-city, fuzzy) |
 | `board_members` | 990 Part VII, 990-PF officers | One row per person per org (each org's newest return): name, `person_key` (first + last), title, hours, pay; state on 990-PF |
 | `board_interlocks` (view) | `board_members` + `grants` | Same-state org pairs sharing board members: `kind` (funder-grantee, funder-funder, funder-nonprofit, nonprofit-nonprofit), `relation` (link, sister, bank-trust), `confidence`, shared people, grants paid between them |
+| `news_articles` | [GDELT DOC 2.0](https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/) | US English news on 6 topics (nonprofit, philanthropy, foundation grants, donations, nonprofit cuts, giving): URL, title, first seen, outlet; which topics found it |
+| `congress_bills` | [Congress.gov API](https://api.congress.gov) | Bills in the current Congress: title, chamber, introduced, latest action, congress.gov link |
+| `federal_register_docs` | [Federal Register API](https://www.federalregister.gov/developers) | Rules, proposed rules, notices, presidential documents: title, abstract, agencies, date; `funding_notice` flags notices of funding opportunities |
+| `source_updates` | Every live loader | Freshness log: source, run time, rows added, newest item, note (a Congress run cut off by the rate limit notes where to resume) |
 | `giving_circles` (view) | IRS master file + SOI | Giving circles that are their own nonprofit, found by name: Impact 100, 100 Who Care, women's funds (only those paying $10K+ in grants), "giving circle"; grants paid (990 Part IX line 1), website. 145 in 38 states. Hosted circles don't file, so they're missing |
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
 

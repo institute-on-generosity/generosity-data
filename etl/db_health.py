@@ -33,6 +33,10 @@ ABOUT = {
     "flag_latest": "View: newest diligence fields per org",
     "funder_purposes": "View: grant purposes per funder",
     "board_interlocks": "View: org pairs that share board members",
+    "news_articles": "GDELT news on philanthropy and nonprofits",
+    "congress_bills": "Bills in the current Congress (Congress.gov)",
+    "federal_register_docs": "Federal Register rules, notices, funding notices",
+    "source_updates": "Freshness log: one row per loader run",
 }
 
 
@@ -72,6 +76,8 @@ def main():
     counties, = one("SELECT count(*) FROM county_need WHERE county_fips <> '00000'")
     latest, = one("SELECT count(*) FROM filing_latest")
     migs = q("SELECT name, to_char(applied_at, 'YYYY-MM-DD') FROM schema_migrations ORDER BY name DESC LIMIT 5")
+    runs = q("""SELECT DISTINCT ON (source) source, to_char(run_at, 'YYYY-MM-DD HH24:MI'), rows_added, coalesce(to_char(newest, 'YYYY-MM-DD'), ''), coalesce(note, '')
+                FROM source_updates ORDER BY source, run_at DESC""")
 
     link_rate = int(linked) / max(1, int(grants))
     checks = [
@@ -102,6 +108,9 @@ def main():
         f"- Newest 990 loaded: object id `{newest_batch}` (IRS batch year {newest_batch[:4]})",
         "- Filings by tax year: " + ", ".join(f"{y}: {n(c)}" for y, c in years),
         "- Latest migrations: " + ", ".join(f"`{m}` ({d})" for m, d in migs), "",
+        "Latest run per live source (`source_updates`):", "",
+        "| Source | Last run | Rows added | Newest item | Note |", "|---|---|---|---|---|",
+        *[f"| {s_} | {r} | {n(a)} | {nw} | {nt} |" for s_, r, a, nw, nt in runs], "",
         "## Tables", "",
         "| Table | Rows (approx.) | Size | Holds |", "|---|---|---|---|",
         *[f"| `{t}`{' (view)' if k == 'm' else ''} | {n(max(0, int(r)))} | {sz} | {ABOUT.get(t, '')} |" for t, k, r, sz, _ in tables], "",

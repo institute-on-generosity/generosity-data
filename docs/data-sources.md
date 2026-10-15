@@ -64,8 +64,8 @@ Also in the brief's **Data sources** tab ([`shared-database-brief.html`](shared-
 
 | Source | Brings | Access | Status |
 |---|---|---|---|
-| [Congress.gov API](https://api.congress.gov) | Bills moving through Congress, by subject | API key | **Next** |
-| [Federal Register API](https://www.federalregister.gov/developers/documentation/api/v1) | New federal rules and grant notices, daily | API | **Next** |
+| [Congress.gov API](https://api.congress.gov) | Every bill in the current Congress (19,611), refreshed by last update | API key | **Connected** |
+| [Federal Register API](https://www.federalregister.gov/developers/documentation/api/v1) | New federal rules and grant notices, daily (24,945 from the past year, 78 funding notices) | API | **Connected** |
 | [County election results](https://electionlab.mit.edu/data) | Vote share by county, for issue donors in a midterm year | Bulk file | Later |
 
 ## Community need
@@ -103,7 +103,7 @@ Also in the brief's **Data sources** tab ([`shared-database-brief.html`](shared-
 
 | Source | Brings | Access | Status |
 |---|---|---|---|
-| [GDELT](https://www.gdeltproject.org) | News mentions every 15 min: programs, closures | API | **Next** |
+| [GDELT](https://www.gdeltproject.org) | News on philanthropy and nonprofits, 6 topics, US English | API | **Connected** |
 
 ## Expert knowledge
 *Guidance to cite in answers*
