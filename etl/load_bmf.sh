@@ -30,12 +30,12 @@ SQL
   done
   cat <<'SQL'
 INSERT INTO orgs (ein, name, care_of, street, city, state, zip, subsection, foundation,
-                  ruling, status, ntee_cd, asset_amt, income_amt, revenue_amt, tax_period)
+                  ruling, status, ntee_cd, asset_amt, income_amt, revenue_amt, tax_period, sort_name)
 SELECT DISTINCT ON (ein)
        ein, name, nullif(ico, ''), nullif(street, ''), nullif(city, ''), nullif(state, ''),
        nullif(zip, ''), nullif(subsection, ''), nullif(foundation, ''), nullif(ruling, ''),
        status, nullif(ntee_cd, ''), nullif(asset_amt, '')::bigint,
-       nullif(income_amt, '')::bigint, nullif(revenue_amt, '')::bigint, nullif(tax_period, '')
+       nullif(income_amt, '')::bigint, nullif(revenue_amt, '')::bigint, nullif(tax_period, ''), nullif(trim(sort_name), '')
 FROM bmf_raw
 WHERE status <> '25'
 ON CONFLICT (ein) DO UPDATE SET
@@ -44,7 +44,7 @@ ON CONFLICT (ein) DO UPDATE SET
   subsection = EXCLUDED.subsection, foundation = EXCLUDED.foundation,
   ruling = EXCLUDED.ruling, status = EXCLUDED.status, ntee_cd = EXCLUDED.ntee_cd,
   asset_amt = EXCLUDED.asset_amt, income_amt = EXCLUDED.income_amt,
-  revenue_amt = EXCLUDED.revenue_amt, tax_period = EXCLUDED.tax_period,
+  revenue_amt = EXCLUDED.revenue_amt, tax_period = EXCLUDED.tax_period, sort_name = EXCLUDED.sort_name,
   loaded_at = now();
 SELECT count(*) AS raw_rows, count(*) FILTER (WHERE status = '25') AS skipped_terminating FROM bmf_raw;
 SQL

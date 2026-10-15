@@ -321,6 +321,7 @@ cd embed && npm install && node embed.mjs   # 512-dim embeddings; local fallback
 for y in 2025 2024 2023; do YEAR=$y TYPES=990PF etl/fetch_990_xml.sh; done  # every US foundation's 990-PF, 3 years (~13 GB of zips)
 python3 etl/load_grants.py        # GrantRadar: funders + grants (Part XV), recipients linked to orgs (~25 min)
 python3 etl/load_grants.py --match-only   # relink recipients only (e.g. after loading more states; national ~1.5 h on 8 workers)
+python3 etl/rematch_grants.py --candidates --apply=override,alias,zip   # round 2 for unmatched grants: hand fixes, IRS secondary names, same ZIP (~20 min)
 python3 etl/load_board.py         # board members (990 Part VII, 990-PF officers) + board interlocks (~15 min)
 python3 etl/load_federal_register.py   # Federal Register rules + notices, incl. funding notices (first run: past year, ~3 min)
 python3 etl/load_gdelt.py --days=30    # GDELT news on philanthropy + nonprofits (~3 min per 10 days; then run with no flag)
@@ -354,6 +355,7 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 | `congress_bills` | [Congress.gov API](https://api.congress.gov) | Bills in the current Congress: title, chamber, introduced, latest action, congress.gov link |
 | `federal_register_docs` | [Federal Register API](https://www.federalregister.gov/developers) | Rules, proposed rules, notices, presidential documents: title, abstract, agencies, date; `funding_notice` flags notices of funding opportunities |
 | `source_updates` | Every live loader | Freshness log: source, run time, rows added, newest item, note (a Congress run cut off by the rate limit notes where to resume) |
+| `grant_match_overrides` | Hand corrections | Recipient name (normalized) + state → EIN (or NULL: never link); beats every automatic rule in `etl/rematch_grants.py` |
 | `giving_circles` (view) | IRS master file + SOI | Giving circles that are their own nonprofit, found by name: Impact 100, 100 Who Care, women's funds (only those paying $10K+ in grants), "giving circle"; grants paid (990 Part IX line 1), website. 145 in 38 states. Hosted circles don't file, so they're missing |
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
 
@@ -383,6 +385,8 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 - The 8-bit (q8) nomic model scored only ~0.975 cosine against full precision, so the local model id is `local:nomic-embed-text-v1.5-fp32@512` and queries must use full precision too.
 - `embed_gpu.py` runs out of GPU memory on the longest texts late in a run; it saves every 4,096 rows, so just rerun it (it skips finished rows).
 - Fuzzy matching nationally: one session took days (each lookup searched all 2M orgs). A `(state, trigrams)` GIN index (`btree_gin`) and 8 workers on name hashes brought it to ~1.5 h.
+- Recipient matching round 2 (`etl/rematch_grants.py`, migration 020): rules are graded before use (NomBot `eval/judge_matches.mts`, Claude says same org or not; bar 95%). Same ZIP + name similarity ≥0.7 with the "Foundation" word agreeing: 95%. IRS secondary name (`orgs.sort_name`) with shared words and same city/ZIP: 99%. Rejected: ZIP at 0.5–0.7 (~65%), secondary name alone (63%: chapters list their host, e.g. Psi Chi → "Bloomfield College"), nationally unique name (63%). Added 88,266 links (+$3.8B): 55.9% → 57.6% of grants.
+- Unmatched grants by reason (Oct 14): 47% of unmatched dollars are US organizations not matched; 32% placeholders ("see statement", HIPAA notes), 10% foreign, 8% individuals (patient programs), 3% government or churches.
 - Board interlocks match people by first + last name within a state (`person_key()`), skipping names on more than 8 boards there; one shared name alone is low confidence. Nonprofit boards come from `filing_flag.people`, which keeps the 25 best-paid people per filing, so very large boards are cut short.
 - OpenSearch (Elasticsearch fork) vs pgvector, Oct 14 benchmark on NomBot's 50 questions: BM25 54% relevant in the top 10 vs meaning search 68%, but 25 ms per query and 0.51 GB vs 1.46 GB. Kept as a benchmark baseline, not a replacement. `brew services start opensearch` did not launch on this Mac; run `/opt/homebrew/opt/opensearch/bin/opensearch` in a terminal instead.
 - `db/refresh.sql` uses a plain refresh with 4 GB `maintenance_work_mem`: CONCURRENTLY rewrote the vector index row by row and ran 40+ min without finishing; plain took 2.5 min.
