@@ -4,6 +4,7 @@ etl/load_grants.py's exact and fuzzy passes. Each rule proposes candidates; rule
 sample is graded (NomBot web/eval/judge_matches.mts) and clears the precision bar.
 
   python3 etl/rematch_grants.py --candidates          # build rm_cand (unlogged): proposed links per rule
+  python3 etl/rematch_grants.py --dba                 # add 'doing business as' proposals (needs etl/load_dba.py)
   python3 etl/rematch_grants.py --sample=60           # write a graded-sample file per rule for the judge
   python3 etl/rematch_grants.py --apply=override,alias,zip   # write the chosen rules' links into grants
 
@@ -12,6 +13,8 @@ Rules (US recipients only; placeholders, individuals and foreign addresses are s
   alias     recipient name = the org's IRS secondary name (orgs.sort_name), same state, one org, and the
             main names share words (chapters often list their host, e.g. Psi Chi -> "Bloomfield College"),
             in the same city or ZIP (generic names like "Mosaic" repeat across a state)
+  dba       recipient name = a "doing business as" name from the org's 990 header (org_dba, etl/load_dba.py),
+            one org in the state and in the country (97% right). Built by --dba, after --candidates
   zip       same ZIP code, name similarity >= 0.7 (name or secondary name), clearly the best in that ZIP,
             "Foundation" in both names or neither, no PTA/PTO/honor-society/booster chapters unless named
   contains  (proposed, not used: 78-83% right on fresh samples) the grant's name whole inside one IRS name in
@@ -98,6 +101,7 @@ def candidates():
 # names still collide across states: national is not used).
 ACCEPT = """(
   (c.method = 'override')
+  OR (c.method = 'dba')
   OR (c.method = 'alias' AND similarity(o.n, u.n) >= 0.3 AND (o.city = u.city OR o.zip = u.zip))
   OR (c.method = 'contains' AND (u.n ~* 'FOUNDATION') = (o.n ~* 'FOUNDATION')
       -- the grant name is at least 0.4 of the IRS name's words, and the IRS name's extra words don't mark
@@ -155,6 +159,16 @@ def contains():
     if errs: sys.exit(f"psql failed: {errs[0][:800]}")
     print(psql("SELECT 'contains: ' || count(*) || ' names' FROM rm_cand WHERE method = 'contains'") + f" ({time.time() - t0:.0f}s)")
 
+def dba():
+    psql("""
+DELETE FROM rm_cand WHERE method = 'dba';
+CREATE TEMP TABLE dn AS SELECT org_norm(d.name) n, o.state st, min(d.ein) ein FROM org_dba d JOIN orgs o USING (ein)
+GROUP BY 1, 2 HAVING count(DISTINCT d.ein) = 1;
+-- the name must belong to one org in the country too (Habitat affiliates appear as DBAs of several EINs)
+DELETE FROM dn WHERE n IN (SELECT org_norm(name) FROM org_dba GROUP BY 1 HAVING count(DISTINCT ein) > 1);
+INSERT INTO rm_cand SELECT u.n, u.city, u.st, u.zip, dn.ein, 'dba', 1 FROM rm_u u JOIN dn USING (n, st);""")
+    print(psql("SELECT 'dba: ' || count(*) || ' names' FROM rm_cand WHERE method = 'dba'"))
+
 def sample(k):
     os.makedirs(OUT, exist_ok=True)
     rows = psql(f"""SELECT json_agg(x) FROM (
@@ -171,7 +185,7 @@ def sample(k):
     print(f"wrote {path}")
 
 def apply(methods):
-    order = ["override", "alias", "zip", "contains", "national"]
+    order = ["override", "dba", "alias", "zip", "contains", "national"]
     chosen = [m for m in order if m in methods]
     psql(f"""
 SET work_mem = '1GB';
@@ -192,5 +206,6 @@ if __name__ == "__main__":
     args = dict(a.lstrip("-").split("=", 1) if "=" in a else (a.lstrip("-"), "") for a in sys.argv[1:])
     if "candidates" in args: candidates()
     if "contains" in args: contains()
+    if "dba" in args: dba()
     if "sample" in args: sample(int(args["sample"] or 60))
     if "apply" in args: apply(args["apply"].split(","))

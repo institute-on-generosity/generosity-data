@@ -146,7 +146,7 @@ flowchart LR
 
 - **Text:** only orgs that e-file a 990 (541,879 of 1.97M).
 - **Years:** IRS 2023 to 2026 (tax years mostly 2022 to 2025).
-- **Recipients:** no EIN on grants. 56% matched by name.
+- **Recipients:** no EIN on grants. 62% matched (name rules, then Claude for the largest leftovers).
 - **Individuals:** not on any 990.
 
 ### Decide
@@ -246,7 +246,7 @@ Every source by what it brings, with API links and status: [`docs/data-sources.m
 
 | Gap | Why it blocks discovery | Fix |
 |---|---|---|
-| Weak links | 44% of grants unlinked. New sources use other IDs (UEI) or only names | ID crosswalk: EIN, UEI, name, address |
+| Weak links | 38% of grants unlinked. New sources use other IDs (UEI) or only names | ID crosswalk: EIN, UEI, name, address |
 | Hidden relationships | Who's connected to whom is buried in JSON and grant rows | Connections table: funds, shares a board member, related org, co-funded |
 | One kind of vector | Can't find funders by what they actually fund | Embed grant purposes and funder profiles |
 | Thin history | Trends need many years. Search keeps the newest only | Every year as a time series. Add IRS 2021 to 2022 |
@@ -275,7 +275,7 @@ Every source by what it brings, with API links and status: [`docs/data-sources.m
 | Tool | Use |
 |---|---|
 | **Link the same org across sources** | |
-| [Splink](https://moj-analytical-services.github.io/splink/) ★ | Matches on name, address and city together, with a confidence score. Millions of rows on a laptop |
+| [Splink](https://moj-analytical-services.github.io/splink/) ★ | Matches on name, address and city together, with a confidence score. Millions of rows on a laptop. Tried on grant recipients Oct 15: 57–73% right, not used |
 | [Claude Batch API](https://docs.anthropic.com/en/docs/build-with-claude/batch-processing) | Settles hard leftover matches by reading both records, at half price |
 | **Find connections** | |
 | [igraph / NetworkX](https://igraph.org) ★ | Clusters of funders, hidden hubs, likely next funders. Nightly, results back to Postgres |
@@ -321,7 +321,8 @@ cd embed && npm install && node embed.mjs   # 512-dim embeddings; local fallback
 for y in 2025 2024 2023; do YEAR=$y TYPES=990PF etl/fetch_990_xml.sh; done  # every US foundation's 990-PF, 3 years (~13 GB of zips)
 python3 etl/load_grants.py        # GrantRadar: funders + grants (Part XV), recipients linked to orgs (~25 min)
 python3 etl/load_grants.py --match-only   # relink recipients only (e.g. after loading more states; national ~1.5 h on 8 workers)
-python3 etl/rematch_grants.py --candidates --apply=override,alias,zip   # round 2 for unmatched grants: hand fixes, IRS secondary names, same ZIP (~20 min)
+python3 etl/load_dba.py           # "doing business as" names from 990 headers into org_dba (~1 min)
+python3 etl/rematch_grants.py --candidates --dba --apply=override,dba,alias,zip   # round 2 for unmatched grants: hand fixes + Claude links, DBA names, IRS secondary names, same ZIP (~20 min)
 python3 etl/load_board.py         # board members (990 Part VII, 990-PF officers) + board interlocks (~15 min)
 python3 etl/load_federal_register.py   # Federal Register rules + notices, incl. funding notices (first run: past year, ~3 min)
 python3 etl/load_gdelt.py --days=30    # GDELT news on philanthropy + nonprofits (~3 min per 10 days; then run with no flag)
@@ -348,14 +349,15 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 | `zip_regions` | [Census ZCTA-county](https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/) + [ARC counties](https://en.wikipedia.org/wiki/List_of_Appalachian_Regional_Commission_counties) | ZIP → county (largest land share; PO-box ZIPs from same-city orgs) and whether it's in Appalachia |
 | `soi_fields` | [IRS SOI field dictionary](https://www.irs.gov/pub/irs-soi/24eofinextractdoc.xlsx) | Description, form location and code meanings for every SOI extract column; `financials.raw` keeps each record's non-empty fields |
 | `funders` | IRS 990-PF e-file XML | One row per private foundation in the US (newest return): assets, grants paid, invitation-only flag, how to apply (Part XV 2a–d). Donation pass-throughs (50,000+ grants on one return, e.g. AmazonSmile) are skipped |
-| `grants` | IRS 990-PF Part XV 3a | Each grant paid, every loaded year: recipient name/address, amount, purpose, `tax_year`, `object_id` of its return (one return per foundation per year, the newest filed); `recipient_ein` links to `orgs` with `match_score` + `match_method` (exact, exact-city, fuzzy) |
+| `grants` | IRS 990-PF Part XV 3a | Each grant paid, every loaded year: recipient name/address, amount, purpose, `tax_year`, `object_id` of its return (one return per foundation per year, the newest filed); `recipient_ein` links to `orgs` with `match_score` + `match_method` (exact, exact-city, fuzzy, then round 2: override, dba, alias, zip, claude-pick, claude-name) |
 | `board_members` | 990 Part VII, 990-PF officers | One row per person per org (each org's newest return): name, `person_key` (first + last), title, hours, pay; state on 990-PF |
 | `board_interlocks` (view) | `board_members` + `grants` | Same-state org pairs sharing board members: `kind` (funder-grantee, funder-funder, funder-nonprofit, nonprofit-nonprofit), `relation` (link, sister, bank-trust), `confidence`, shared people, grants paid between them |
 | `news_articles` | [GDELT DOC 2.0](https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/) | US English news on 6 topics (nonprofit, philanthropy, foundation grants, donations, nonprofit cuts, giving): URL, title, first seen, outlet; which topics found it |
 | `congress_bills` | [Congress.gov API](https://api.congress.gov) | Bills in the current Congress: title, chamber, introduced, latest action, congress.gov link |
 | `federal_register_docs` | [Federal Register API](https://www.federalregister.gov/developers) | Rules, proposed rules, notices, presidential documents: title, abstract, agencies, date; `funding_notice` flags notices of funding opportunities |
 | `source_updates` | Every live loader | Freshness log: source, run time, rows added, newest item, note (a Congress run cut off by the rate limit notes where to resume) |
-| `grant_match_overrides` | Hand corrections | Recipient name (normalized) + state → EIN (or NULL: never link); beats every automatic rule in `etl/rematch_grants.py` |
+| `grant_match_overrides` | Hand corrections, Claude-confirmed links | Recipient name (normalized) + state → EIN (or NULL: never link); beats every automatic rule in `etl/rematch_grants.py`. Holds the 6,202 Claude links of Oct 15 (`note` says which) |
+| `org_dba` | 990 e-file headers (`etl/load_dba.py`) | "Doing business as" names: 28,632 names for 28,080 orgs (e.g. Médecins Sans Frontières USA → Doctors Without Borders USA) |
 | `giving_circles` (view) | IRS master file + SOI | Giving circles that are their own nonprofit, found by name: Impact 100, 100 Who Care, women's funds (only those paying $10K+ in grants), "giving circle"; grants paid (990 Part IX line 1), website. 145 in 38 states. Hosted circles don't file, so they're missing |
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
 
@@ -386,6 +388,8 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 - `embed_gpu.py` runs out of GPU memory on the longest texts late in a run; it saves every 4,096 rows, so just rerun it (it skips finished rows).
 - Fuzzy matching nationally: one session took days (each lookup searched all 2M orgs). A `(state, trigrams)` GIN index (`btree_gin`) and 8 workers on name hashes brought it to ~1.5 h.
 - Recipient matching round 2 (`etl/rematch_grants.py`, migration 020): rules are graded before use (NomBot `eval/judge_matches.mts`, Claude says same org or not; bar 95%). Same ZIP + name similarity ≥0.7 with the "Foundation" word agreeing: 95%. IRS secondary name (`orgs.sort_name`) with shared words and same city/ZIP: 99%. Rejected: ZIP at 0.5–0.7 (~65%), secondary name alone (63%: chapters list their host, e.g. Psi Chi → "Bloomfield College"), nationally unique name (63%), and name containment in the same city (78–83% on a fresh sample even with word guards that scored 98% on the sample they were tuned on: "X High School" vs "X High School PTSA" are different entities). Grade every rule on a sample it was not tuned on. Added 88,266 links (+$3.8B): 55.9% → 57.6% of grants.
+- Round 3 (Oct 15): link rate among US-org recipients is 59%, about the same as overall (placeholders and foreign grants are few by count, large by dollars). The biggest gap is famous charities under public names (Doctors Without Borders, Stanford). "Doing business as" names from 990 headers: 97%, +62,631 grants. Rejected: reusing existing links across cities or states (64%), same street address (13–54%: a school, its PTO and boosters share one), Splink (`etl/splink_grants.py`, 57–73%, 64 min to train: same entity confusion). Then Claude (subscription agents, `etl/claude_match/PICK.md`) read the top 20,000 unmatched recipients by dollars (81% of unmatched dollars), each with 5–12 IRS candidates: picked one, named the legal entity, or said none. Named legal names in the same state: 100% (+19,974 grants, $2.7B). Picks, after a second strict read (`VERIFY.md`) dropped 48: 94.9% on 394 graded (+155,046 grants, $27.1B). 59.1% → 62.0% of grants, 55.1% of dollars. Links stored in `grant_match_overrides`, so reloads keep them.
+- Original matching (`load_grants.py`) graded Oct 15: exact 95%, exact-city 99%, **fuzzy 79%** (581K grants: generic church and school names in other cities, "Missouri Historical Society" → "Missouri Pacific Historical Society"). Next: tighten fuzzy.
 - Unmatched grants by reason (Oct 14): 47% of unmatched dollars are US organizations not matched; 32% placeholders ("see statement", HIPAA notes), 10% foreign, 8% individuals (patient programs), 3% government or churches.
 - Board interlocks match people by first + last name within a state (`person_key()`), skipping names on more than 8 boards there; one shared name alone is low confidence. Nonprofit boards come from `filing_flag.people`, which keeps the 25 best-paid people per filing, so very large boards are cut short.
 - OpenSearch (Elasticsearch fork) vs pgvector, Oct 14 benchmark on NomBot's 50 questions: BM25 54% relevant in the top 10 vs meaning search 68%, but 25 ms per query and 0.51 GB vs 1.46 GB. Kept as a benchmark baseline, not a replacement. `brew services start opensearch` did not launch on this Mac; run `/opt/homebrew/opt/opensearch/bin/opensearch` in a terminal instead.
