@@ -1,6 +1,6 @@
 # Database health
 
-*Generated 2026-10-15 12:56 PDT by `etl/db_health.py`. Database: 15 GB.*
+*Generated 2026-10-15 14:57 PDT by `etl/db_health.py`. Database: 15 GB.*
 
 ## Checks
 
@@ -18,9 +18,9 @@
 | 990 filings (text + diligence fields) | 785,772, 785,772 with vectors |
 | Foundations (990-PF) | 138,734 |
 | Grants | 5,348,919, $392B, tax years 2019–2025 |
-| Grants linked to a recipient (org, school district or college) | 3,428,354 (64%; 65% of the 5,250,947 not foreign, individual or placeholder) |
+| Grants linked to a recipient (org, school district or college) | 3,415,251 (64%; 65% of the 5,250,947 not foreign, individual or placeholder) |
 | Board seats | 4,859,408 at 679,042 orgs |
-| Board interlocks (same-state org pairs) | 977,088: 46,060 high-confidence hidden links, 14,597 foundation-grantee |
+| Board interlocks (same-state org pairs) | 977,088: 46,053 high-confidence hidden links, 14,585 foundation-grantee |
 | Giving circles | 145 |
 | Counties with need data | 3,144 |
 
@@ -43,7 +43,7 @@ Latest run per live source (`source_updates`):
 |---|---|---|---|
 | `filing_latest` (view) | 541,879 | 3593 MB | View: newest filing per org (search index) |
 | `filing_text` | 785,789 | 3510 MB | Mission and programs per 990, with vectors |
-| `grants` | 5,355,064 | 1975 MB | Every 990-PF grant, linked to recipients by name |
+| `grants` | 5,355,064 | 1978 MB | Every 990-PF grant, linked to recipients by name |
 | `board_members` | 4,859,408 | 1473 MB | Board seats from 990 Part VII and 990-PF officers |
 | `orgs` | 1,972,446 | 1138 MB | Every exempt organization (IRS master file) |
 | `financials` | 538,959 | 928 MB | Revenue, expenses, assets by year (IRS SOI) |
@@ -61,8 +61,11 @@ Latest run per live source (`source_updates`):
 | `federal_register_docs` | 24,945 | 37 MB | Federal Register rules, notices, funding notices |
 | `funders` | 138,734 | 34 MB | Private foundations, newest 990-PF |
 | `congress_bills` | 19,611 | 27 MB | Bills in the current Congress (Congress.gov) |
-| `grant_unlinked` | 122,453 | 18 MB | Links removed after grading, with the reason |
+| `grant_unlinked` | 138,848 | 20 MB | Links removed after grading, with the reason |
 | `public_entities` | 25,511 | 6488 kB | School districts (NCES) and colleges (IPEDS) for grants to non-IRS recipients |
+| `rm_fz2c` | 84,191 | 4656 kB |  |
+| `rm_fz2` | 32,116 | 4656 kB |  |
+| `rm_fz2r` | 32,116 | 4480 kB |  |
 | `org_dba` | 28,632 | 3824 kB | Doing-business-as names from 990 headers |
 | `rm_top2` | 20,000 | 3648 kB |  |
 | `grant_match_overrides` | 17,236 | 3640 kB | Hand and Claude-confirmed recipient links |
