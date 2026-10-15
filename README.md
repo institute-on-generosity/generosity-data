@@ -322,6 +322,7 @@ for y in 2025 2024 2023; do YEAR=$y TYPES=990PF etl/fetch_990_xml.sh; done  # ev
 python3 etl/load_grants.py        # GrantRadar: funders + grants (Part XV), recipients linked to orgs (~25 min)
 python3 etl/load_grants.py --match-only   # relink recipients only (e.g. after loading more states; national ~1.5 h on 8 workers)
 python3 etl/load_board.py         # board members (990 Part VII, 990-PF officers) + board interlocks (~15 min)
+python3 etl/load_search_index.py  # optional: all orgs into a local OpenSearch for NomBot's `npm run bench -- --bm25` (~2 min; brew install opensearch)
 psql nombot -f db/refresh.sql      # rebuild the newest-record views, vector index, interlocks after any load (~5 min)
 ```
 
@@ -376,4 +377,5 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 - `embed_gpu.py` runs out of GPU memory on the longest texts late in a run; it saves every 4,096 rows, so just rerun it (it skips finished rows).
 - Fuzzy matching nationally: one session took days (each lookup searched all 2M orgs). A `(state, trigrams)` GIN index (`btree_gin`) and 8 workers on name hashes brought it to ~1.5 h.
 - Board interlocks match people by first + last name within a state (`person_key()`), skipping names on more than 8 boards there; one shared name alone is low confidence. Nonprofit boards come from `filing_flag.people`, which keeps the 25 best-paid people per filing, so very large boards are cut short.
+- OpenSearch (Elasticsearch fork) vs pgvector, Oct 14 benchmark on NomBot's 50 questions: BM25 54% relevant in the top 10 vs meaning search 68%, but 25 ms per query and 0.51 GB vs 1.46 GB. Kept as a benchmark baseline, not a replacement. `brew services start opensearch` did not launch on this Mac; run `/opt/homebrew/opt/opensearch/bin/opensearch` in a terminal instead.
 - `db/refresh.sql` uses a plain refresh with 4 GB `maintenance_work_mem`: CONCURRENTLY rewrote the vector index row by row and ran 40+ min without finishing; plain took 2.5 min.
