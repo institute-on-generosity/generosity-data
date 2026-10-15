@@ -131,6 +131,12 @@ ALTER TABLE match_r ADD ein char(9), ADD score real, ADD method text; ANALYZE ma
 UPDATE match_r r SET ein = m.ein, score = 1, method = 'exact'
 FROM (SELECT r.n, r.st, min(o.ein) AS ein FROM (SELECT DISTINCT n, st FROM match_r) r JOIN match_o o USING (st, n) GROUP BY 1, 2 HAVING count(*) = 1) m
 WHERE r.n = m.n AND r.st = m.st;
+-- ...but not in another city when the name repeats nationally (4+ orgs, or 2+ for churches/congregations):
+-- graded 14% right Oct 15 ("Meals on Wheels", "Trinity Presbyterian Church" in another town)
+UPDATE match_r r SET ein = NULL, score = NULL, method = NULL
+FROM match_o o, (SELECT n, count(*) AS k FROM match_o GROUP BY n HAVING count(*) > 1) nat
+WHERE r.method = 'exact' AND o.ein = r.ein AND o.city <> r.city AND nat.n = r.n
+  AND (nat.k >= 4 OR r.n ~ '\\m(CHURCH|CONGREGATION|PARISH|MINISTRIES|MINISTRY|TEMPLE|CHAPEL|FELLOWSHIP|SYNAGOGUE|MOSQUE)\\M');
 -- exact name, several orgs in the state: the one in the recipient's city
 UPDATE match_r r SET ein = m.ein, score = 1, method = 'exact-city'
 FROM (SELECT r.n, r.st, r.city, min(o.ein) AS ein FROM match_r r JOIN match_o o USING (st, n, city) WHERE r.ein IS NULL GROUP BY 1, 2, 3 HAVING count(*) = 1) m

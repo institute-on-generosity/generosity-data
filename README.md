@@ -146,7 +146,7 @@ flowchart LR
 
 - **Text:** only orgs that e-file a 990 (541,879 of 1.97M).
 - **Years:** IRS 2023 to 2026 (tax years mostly 2022 to 2025).
-- **Recipients:** no EIN on grants. 64% matched (name rules, then Claude for the largest leftovers and to fix wrong links).
+- **Recipients:** no EIN on grants. 63% matched (name rules, then Claude for the largest leftovers and to fix wrong links).
 - **Individuals:** not on any 990.
 
 ### Decide
@@ -246,7 +246,7 @@ Every source by what it brings, with API links and status: [`docs/data-sources.m
 
 | Gap | Why it blocks discovery | Fix |
 |---|---|---|
-| Weak links | 36% of grants unlinked. New sources use other IDs (UEI) or only names | ID crosswalk: EIN, UEI, name, address |
+| Weak links | 37% of grants unlinked. New sources use other IDs (UEI) or only names | ID crosswalk: EIN, UEI, name, address |
 | Hidden relationships | Who's connected to whom is buried in JSON and grant rows | Connections table: funds, shares a board member, related org, co-funded |
 | One kind of vector | Can't find funders by what they actually fund | Embed grant purposes and funder profiles |
 | Thin history | Trends need many years. Search keeps the newest only | Every year as a time series. Add IRS 2021 to 2022 |
@@ -396,8 +396,19 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 - National charities with one EIN for all chapters (Red Cross, Doctors Without Borders, Smile Train): names already linked to one $100M+ org, grants in other states. Rule alone 82%; after Claude kept only true single-EIN nationals (1,146 of 1,295; not Catholic Charities, YMCA, United Way): 95%, +54,311 grants (`national`, stored in `grant_match_overrides`).
 - School districts and colleges (`etl/load_public_entities.py`, migration 022): NCES CCD 2023–24 (19,452 districts) and IPEDS 2023 (6,059 colleges, with EIN and aliases). Exact name or alias in the state, one entity per name: 100% on 135 graded. +38,734 grants: 5,877 to colleges whose IPEDS EIN is in `orgs` (`ipeds-ein`), 32,857 to entities outside the IRS list (`grants.recipient_entity`, `public`).
 - Claude round 2 (Oct 15): next 20,000 unmatched names by grant count (308K grants), same method. Legal names named: 99% (+5,236 grants). Picks: 93% on 250 graded (+98,962 grants; misses mostly theater/library vs its foundation, plus a few true errors). Final today: **63.8% of grants linked, 65.0% of linkable, 55.3% of dollars** (after the second fuzzy re-check removed 13K wrong links); 17,236 rows in `grant_match_overrides`.
+- **Exact links re-graded (Oct 15, fresh stratified samples):** same city 100%, same ZIP 100% (200 graded); **other city 81%**. All exact links now have a name unique in the state (shared names like the Yale class funds were fixed earlier). Errors are generic names that repeat across the country ("Meals on Wheels", "Trinity Presbyterian Church").
+
+| Other-city exact tier | Grants | Graded (fresh sample) | Action |
+|---|---|---|---|
+| Name held by 1 org nationally, not a church name | ~179K | **95%** (152/160) | kept |
+| Same, church/congregation name | ~4K | 80% (48/60) | kept, open |
+| Name held by 2–3 orgs, not a church name | ~13K | 60% (48/80; 59% on an earlier sample) | kept, open: needs a Claude re-check |
+| Name held by 4+ orgs, or 2+ for church names | 24,482 ($0.6B) | **14% right** (11/80) | **unlinked**, in `grant_unlinked`; `load_grants.py` no longer links them |
+
+  After: **63.4% of grants linked, 64.6% of linkable, 55.1% of dollars**.
 - `grants.recipient_kind` (migration 023) marks grants that can never link: foreign 81,628, placeholder 13,998, individual 2,346 (few, but $110B). Health report shows linked of all and of linkable.
 - Unmatched grants by reason (Oct 14): 47% of unmatched dollars are US organizations not matched; 32% placeholders ("see statement", HIPAA notes), 10% foreign, 8% individuals (patient programs), 3% government or churches.
-- Board interlocks match people by first + last name within a state (`person_key()`), skipping names on more than 8 boards there; one shared name alone is low confidence. Nonprofit boards come from `filing_flag.people`, which keeps the 25 best-paid people per filing, so very large boards are cut short.
+- Unmatched linkable grants by size (Oct 15, after the exact fix): **$1M+ 7,303 grants, $34.5B** (52% of unmatched dollars); $100K–1M 78,134, $17.5B; $10K–100K 458,961, $11.9B; under $10K 1.32M, $2.8B. Top 100 names hold $21B: unflagged placeholders ("ATCH 4", HIPAA notes, "vials of … distributed": 31 grants, $5.2B), donor-advised fund sponsors filed under another state (Fidelity, Schwab, Goldman Sachs: 4,109 grants, $4.9B) and big universities/hospitals under public names (UCSF Foundation, Mass General, University of Michigan).
+- Board interlocks match people by first + last name within a state (`person_key()`), skipping names on more than 8 boards there; one shared name alone is low confidence. Graded Oct 15 (120 high, 40 medium, 40 low `link` pairs, by reading names, titles, cities): **high ~100%** same person (2+ shared names, or a grant between them), **medium ~90%**, **low ~53%** (common names in different towns: Brian Johnson, Norma Garcia). `person_key()` bugs: Jr/Sr dropped (Pat Becker Jr vs Sr), apostrophes split names (D'Albert → Albert), credentials and "Deceased" kept as last names ("KIM LCSW", "MARK DECEASED"). Nonprofit boards come from `filing_flag.people`, which keeps the 25 best-paid people per filing, so very large boards are cut short.
 - OpenSearch (Elasticsearch fork) vs pgvector, Oct 14 benchmark on NomBot's 50 questions: BM25 54% relevant in the top 10 vs meaning search 68%, but 25 ms per query and 0.51 GB vs 1.46 GB. Kept as a benchmark baseline, not a replacement. `brew services start opensearch` did not launch on this Mac; run `/opt/homebrew/opt/opensearch/bin/opensearch` in a terminal instead.
 - `db/refresh.sql` uses a plain refresh with 4 GB `maintenance_work_mem`: CONCURRENTLY rewrote the vector index row by row and ran 40+ min without finishing; plain took 2.5 min.
