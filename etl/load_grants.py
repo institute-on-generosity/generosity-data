@@ -30,7 +30,6 @@ SRCS = [a for a in sys.argv[1:] if not a.startswith("--")] or sorted((os.path.jo
 PASS_THROUGH = 50_000  # grants on one return: above this it's a donation pass-through (see above)
 FUZZY = 0.6        # trigram candidates
 CITY_FUZZY = 0.7   # accepted when the city matches
-FAR_FUZZY = 0.9    # accepted from another city in the state
 
 def local(tag):
     return tag.rsplit("}", 1)[-1]
@@ -147,7 +146,8 @@ SELECT DISTINCT ON (r.n, r.st, r.city) r.n, r.city, r.st, o.ein,
        least(1, similarity(o.n, r.n) + CASE WHEN o.city = r.city THEN 0.1 ELSE 0 END)::real AS score
 FROM match_r r JOIN match_o o ON o.n % r.n AND o.st = r.st
 WHERE r.ein IS NULL AND length(r.n) >= 6 AND abs(hashtext(r.n)) % {WORKERS} = :k
-  AND similarity(o.n, r.n) >= CASE WHEN o.city = r.city THEN {CITY_FUZZY} ELSE {FAR_FUZZY} END
+  -- same city only: other-city links graded 12% right (Oct 15; generic names like "Life Church")
+  AND o.city = r.city AND similarity(o.n, r.n) >= {CITY_FUZZY}
 ORDER BY r.n, r.st, r.city, score DESC;
 """
 WRITE_SQL = """

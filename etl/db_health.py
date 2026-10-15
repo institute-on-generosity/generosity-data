@@ -24,6 +24,10 @@ ABOUT = {
     "filing_flag": "Diligence fields per 990: finances, board, policies, officers",
     "funders": "Private foundations, newest 990-PF",
     "grants": "Every 990-PF grant, linked to recipients by name",
+    "public_entities": "School districts (NCES) and colleges (IPEDS) for grants to non-IRS recipients",
+    "org_dba": "Doing-business-as names from 990 headers",
+    "grant_match_overrides": "Hand and Claude-confirmed recipient links",
+    "grant_unlinked": "Links removed after grading, with the reason",
     "board_members": "Board seats from 990 Part VII and 990-PF officers",
     "zip_regions": "ZIP to county, Appalachia flag",
     "county_need": "County poverty, income, population (Census)",
@@ -68,7 +72,9 @@ def main():
     years = q("SELECT tax_year, count(*) FROM filing_text GROUP BY 1 ORDER BY 1 DESC LIMIT 5")
     newest_batch, = one("SELECT max(object_id) FROM filing_text")
     funders, = one("SELECT count(*) FROM funders")
-    grants, linked, amount, gy0, gy1 = one("SELECT count(*), count(recipient_ein), round(sum(amount)), min(tax_year), max(tax_year) FROM grants")
+    grants, linked, amount, gy0, gy1, linkable, linked_l = one("""SELECT count(*), count(*) FILTER (WHERE recipient_ein IS NOT NULL OR recipient_entity IS NOT NULL),
+        round(sum(amount)), min(tax_year), max(tax_year), count(*) FILTER (WHERE recipient_kind IS NULL),
+        count(*) FILTER (WHERE recipient_kind IS NULL AND (recipient_ein IS NOT NULL OR recipient_entity IS NOT NULL)) FROM grants""")
     seats, seat_orgs = one("SELECT count(*), count(DISTINCT ein) FROM board_members")
     pairs, hidden, grantee = one("""SELECT count(*), count(*) FILTER (WHERE relation = 'link' AND confidence = 'high'),
         count(*) FILTER (WHERE kind = 'funder-grantee') FROM board_interlocks""")
@@ -80,11 +86,12 @@ def main():
                 FROM source_updates ORDER BY source, run_at DESC""")
 
     link_rate = int(linked) / max(1, int(grants))
+    link_rate_l = int(linked_l) / max(1, int(linkable))
     checks = [
         (int(stale) == 0, f"Every filing embedded with the current model ({MODEL})" if int(stale) == 0 else f"{n(stale)} filings need embedding: run `embed/embed_gpu.py`"),
         (int(latest) > 0, f"Search index view populated ({n(latest)} orgs)" if int(latest) else "filing_latest is empty: run `db/refresh.sql`"),
         (int(pairs) > 0, "Board interlocks built" if int(pairs) else "board_interlocks is empty: run `etl/load_board.py`"),
-        (link_rate >= LINK_GOAL, f"Grants linked to a recipient: {link_rate:.0%} (goal {LINK_GOAL:.0%})"),
+        (link_rate >= LINK_GOAL, f"Grants linked to a recipient: {link_rate:.0%} of all, {link_rate_l:.0%} of those that can link (goal {LINK_GOAL:.0%} of all)"),
     ]
 
     out = [
@@ -99,7 +106,7 @@ def main():
         f"| 990 filings (text + diligence fields) | {n(filings)}, {n(embedded)} with vectors |",
         f"| Foundations (990-PF) | {n(funders)} |",
         f"| Grants | {n(grants)}, ${int(float(amount or 0)) / 1e9:.0f}B, tax years {gy0}–{gy1} |",
-        f"| Grants linked to a recipient org | {n(linked)} ({link_rate:.0%}) |",
+        f"| Grants linked to a recipient (org, school district or college) | {n(linked)} ({link_rate:.0%}; {link_rate_l:.0%} of the {n(linkable)} not foreign, individual or placeholder) |",
         f"| Board seats | {n(seats)} at {n(seat_orgs)} orgs |",
         f"| Board interlocks (same-state org pairs) | {n(pairs)}: {n(hidden)} high-confidence hidden links, {n(grantee)} foundation-grantee |",
         f"| Giving circles | {n(circles)} |",

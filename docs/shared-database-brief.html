@@ -409,7 +409,7 @@ flowchart LR
     <ul class="gotchas">
       <li><b>Text:</b> only orgs that e-file a 990 (541,879 of 1.97M).</li>
       <li><b>Years:</b> IRS 2023 to 2026 (tax years mostly 2022 to 2025).</li>
-      <li><b>Recipients:</b> no EIN on grants. 62% matched (name rules, then Claude for the largest leftovers).</li>
+      <li><b>Recipients:</b> no EIN on grants. 64% matched (name rules, then Claude for the largest leftovers and to fix wrong links).</li>
       <li><b>Individuals:</b> not on any 990.</li>
     </ul>
   </section>
@@ -762,7 +762,7 @@ flowchart LR
       <table>
         <thead><tr><th>Gap</th><th>Why it blocks discovery</th><th>Fix</th></tr></thead>
         <tbody>
-          <tr><td>Weak links</td><td>38% of grants unlinked. New sources use other IDs (UEI) or only names</td><td>ID crosswalk: EIN, UEI, name, address</td></tr>
+          <tr><td>Weak links</td><td>36% of grants unlinked. New sources use other IDs (UEI) or only names</td><td>ID crosswalk: EIN, UEI, name, address</td></tr>
           <tr><td>Hidden relationships</td><td>Who's connected to whom is buried in JSON and grant rows</td><td>Connections table: funds, shares a board member, related org, co-funded</td></tr>
           <tr><td>One kind of vector</td><td>Can't find funders by what they actually fund</td><td>Embed grant purposes and funder profiles</td></tr>
           <tr><td>Thin history</td><td>Trends need many years. Search keeps the newest only</td><td>Every year as a time series. Add IRS 2021 to 2022</td></tr>
