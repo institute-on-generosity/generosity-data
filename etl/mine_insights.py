@@ -238,9 +238,13 @@ def scatter(values, x, y, x_title, y_title, label_field, size=None, fmt=".0%", l
     pts = {"mark": {"type": "circle", "opacity": 0.6}, "encoding": enc}
     layers = [pts]
     if label_test:
-        layers.append({"transform": [{"filter": label_test}],
-                       "mark": {"type": "text", "align": "left", "dx": 7, "fontSize": 11},
-                       "encoding": {"x": enc["x"], "y": enc["y"], "text": {"field": label_field, "type": "nominal"}}})
+        # labels sit right of their point, except in the right third of the plot, where they would run past
+        # the edge and get cut off: there they sit left of the point
+        xmax = max((float(v[x]) for v in values if v.get(x) is not None), default=0)
+        for side, test, dx in (("left", f"datum['{x}'] <= {xmax * 0.66}", 7), ("right", f"datum['{x}'] > {xmax * 0.66}", -7)):
+            layers.append({"transform": [{"filter": label_test}, {"filter": test}],
+                           "mark": {"type": "text", "align": side, "dx": dx, "fontSize": 11},
+                           "encoding": {"x": enc["x"], "y": enc["y"], "text": {"field": label_field, "type": "nominal"}}})
     spec["layer"] = layers
     return spec
 

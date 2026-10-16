@@ -263,7 +263,7 @@ Every source by what it brings, with API links and status: [`docs/data-sources.m
 
 ### Build order
 
-1. **Connections table** (Board interlocks done, Oct 14): Board interlocks from officer names: 977K same-state pairs, 45K high-confidence hidden links, 13,164 foundations paying an org they share board members with. [Graph view](https://claude.ai/artifact/8u9Nfum4wGRhAZhHJZF2VA). Co-funding next.
+1. **Connections table** (Board interlocks done, Oct 14): Board interlocks from officer names: 511K same-state pairs, 45K high-confidence hidden links, 14,457 pairs where a foundation pays an org it shares board members with (after the Oct 15 name-matching fix, migration 027). [Graph view](https://claude.ai/artifact/8u9Nfum4wGRhAZhHJZF2VA). Co-funding next.
 2. **ID crosswalk**: Before USAspending and other new sources, so they link on day one.
 3. **Grant-purpose vectors** (Embedding API): Search funders by what they fund, not only by who they funded.
 4. **Signal tables** (Nightly): Deserts, clusters, trends, warnings, precomputed.
@@ -381,7 +381,7 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 - [x] **Every US nonprofit (Oct 13)**: 1,972,852 orgs, 538,346 SOI rows, 513,813 filings (text, FLAG fields, websites), all re-embedded at full precision on the GPU; 57% of 4.84M grants linked (82,671 foundations fund a linked org)
 - [x] Newest-record views + vector index on them (migration 015, `db/refresh.sql`); `btree_gin` for state-scoped fuzzy matching (016); funder × purpose sums for grant types (017)
 - [x] **IRS 2026 batches (Oct 14)**: 785,772 filings for 541,879 orgs (452,462 websites); 138,734 foundations, 5,348,919 grants over 4 IRS years (tax years mostly 2022–2025, $392B); 56% linked (85,127 foundations fund a linked org; 49% of linked grants stay in the funder's state)
-- [x] **Board interlocks (migration 018, `etl/load_board.py`)**: 4,859,408 board seats at 679,042 orgs; 977,088 same-state org pairs sharing a board member: 858,688 hidden links (45,116 high confidence), the rest sister orgs or bank trusts; 13,164 pairs where a foundation pays an org it shares board members with (9,213 hidden)
+- [x] **Board interlocks (migrations 018, 027, `etl/load_board.py`)**: 4,859,408 board seats at 679,042 orgs; 511,243 same-state org pairs sharing a board member: 420,614 hidden links (44,816 high confidence), the rest sister orgs or bank trusts; 14,457 pairs where a foundation pays an org it shares board members with (10,042 hidden)
 - [x] **Insights (migration 025, `etl/mine_insights.py`)**: 32 verified patterns in 6 sections for NomBot's Insights tab, refreshed by one command
 
 ## Insights
@@ -429,8 +429,20 @@ Precomputed, verified patterns for NomBot's **Insights** tab (audience: philanth
   After: **63.4% of grants linked, 64.6% of linkable, 55.1% of dollars**.
 - `grants.recipient_kind` (migration 023) marks grants that can never link: foreign 81,628, placeholder 13,998, individual 2,346 (few, but $110B). Health report shows linked of all and of linkable.
 - Migration 024 moves the rules into `recipient_kind_of(name, state)` (re-applied by `load_grants.py` after every match) and adds HIPAA notes, "N recipients/students", "ATCH 4", "vials of … distributed": +2,721 grants flagged ($10.8B), 97% right on 120 graded. Placeholder 16,577, individual 2,488.
+- Hand links (Oct 15): 9 donor-advised fund sponsors under any state name (Fidelity, Schwab, Vanguard, NPT, GS, NCF, BofA, Raymond James, T. Rowe Price; 499 name variants, 99% graded) and 47 top unmatched names (graded 47/51, rejects dropped) in `grant_match_overrides`; 39 public universities in `public_entity_aliases` (migration 026, applied by `load_public_entities.py --match`, which now upserts instead of truncating). Dollars linked 55.1% → 57.4%.
+- Migration 028: `flag_latest` and `financials_latest` break same-year ties by newest filing (`object_id`), then full 990 over EZ; before, 5,611 orgs with 2+ returns in a year got a random pick per refresh.
 - Unmatched grants by reason (Oct 14): 47% of unmatched dollars are US organizations not matched; 32% placeholders ("see statement", HIPAA notes), 10% foreign, 8% individuals (patient programs), 3% government or churches.
 - Unmatched linkable grants by size (Oct 15, after the exact fix): **$1M+ 7,303 grants, $34.5B** (52% of unmatched dollars); $100K–1M 78,134, $17.5B; $10K–100K 458,961, $11.9B; under $10K 1.32M, $2.8B. Top 100 names hold $21B: unflagged placeholders ("ATCH 4", HIPAA notes, "vials of … distributed": 31 grants, $5.2B), donor-advised fund sponsors filed under another state (Fidelity, Schwab, Goldman Sachs: 4,109 grants, $4.9B) and big universities/hospitals under public names (UCSF Foundation, Mass General, University of Michigan).
-- Board interlocks match people by first + last name within a state (`person_key()`), skipping names on more than 8 boards there; one shared name alone is low confidence. Graded Oct 15 (120 high, 40 medium, 40 low `link` pairs, by reading names, titles, cities): **high ~100%** same person (2+ shared names, or a grant between them), **medium ~90%**, **low ~53%** (common names in different towns: Brian Johnson, Norma Garcia). `person_key()` bugs: Jr/Sr dropped (Pat Becker Jr vs Sr), apostrophes split names (D'Albert → Albert), credentials and "Deceased" kept as last names ("KIM LCSW", "MARK DECEASED"). Nonprofit boards come from `filing_flag.people`, which keeps the 25 best-paid people per filing, so very large boards are cut short.
+- Board interlocks match people by first + last name within a state (`person_key()`), skipping names on more than 8 boards there. Graded Oct 15 (120 high, 40 medium, 40 low `link` pairs, by reading names, titles, cities): **high ~100%** same person, **medium ~90%**, **low ~53%** (common names in different towns: Brian Johnson, Norma Garcia), plus `person_key()` bugs (apostrophes split names, credentials and "Deceased" kept as last names, Jr/Sr ignored).
+- **Fix (migration 027):** `person_key()` keeps apostrophe names whole and drops credentials, honorifics and status words. A shared person doesn't count when middle initials (`person_middle()`) or Jr/Sr (`person_suffix()`) conflict. Low-confidence pairs (one common name, no grant) need both orgs in the same county. Obvious affiliates ("X" and "X Foundation", chamber pairs, fire company and relief fund) are `sister`. Functions are schema-qualified: `REFRESH MATERIALIZED VIEW` runs with a restricted search path.
+
+| `link` pairs | Before | After | Graded after (fresh sample) |
+|---|---|---|---|
+| High | 46,045 | 44,816 | 50/50 |
+| Medium | 209,977 | 208,281 | 38/40 (95%) |
+| Low | 602,666 | 167,517 | 35/40 (**88%**, was ~53%) |
+| All pairs (any relation) | 977,088 | 511,243 | |
+
+  Nonprofit boards come from `filing_flag.people`, which keeps the 25 best-paid people per filing, so very large boards are cut short.
 - OpenSearch (Elasticsearch fork) vs pgvector, Oct 14 benchmark on NomBot's 50 questions: BM25 54% relevant in the top 10 vs meaning search 68%, but 25 ms per query and 0.51 GB vs 1.46 GB. Kept as a benchmark baseline, not a replacement. `brew services start opensearch` did not launch on this Mac; run `/opt/homebrew/opt/opensearch/bin/opensearch` in a terminal instead.
 - `db/refresh.sql` uses a plain refresh with 4 GB `maintenance_work_mem`: CONCURRENTLY rewrote the vector index row by row and ran 40+ min without finishing; plain took 2.5 min.

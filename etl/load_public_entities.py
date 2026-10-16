@@ -37,8 +37,12 @@ def main():
     with open(OUT, "w") as f:
         f.writelines("\t".join(x) + "\n" for x in rows)
     sql = f"""
-TRUNCATE public_entities;
-\\copy public_entities (id, kind, name, alias, city, state, zip, ein, website) FROM '{OUT}' WITH (FORMAT text, NULL '')
+-- upsert, not truncate: public_entity_aliases points at these ids
+CREATE TEMP TABLE pe_new (LIKE public_entities);
+\\copy pe_new (id, kind, name, alias, city, state, zip, ein, website) FROM '{OUT}' WITH (FORMAT text, NULL '')
+INSERT INTO public_entities SELECT * FROM pe_new
+ON CONFLICT (id) DO UPDATE SET kind = EXCLUDED.kind, name = EXCLUDED.name, alias = EXCLUDED.alias, city = EXCLUDED.city,
+  state = EXCLUDED.state, zip = EXCLUDED.zip, ein = EXCLUDED.ein, website = EXCLUDED.website;
 SELECT kind, count(*) FROM public_entities GROUP BY 1 ORDER BY 1;"""
     r = subprocess.run(["psql", DB, "-v", "ON_ERROR_STOP=1", "-qAt"], input=sql, text=True, capture_output=True)
     print(r.stdout.strip() or r.stderr.strip())
@@ -60,6 +64,12 @@ UPDATE grants g SET recipient_ein = o.ein, recipient_entity = pe.id,
        match_method = CASE WHEN o.ein IS NULL THEN 'public' ELSE 'ipeds-ein' END, match_score = 1
 FROM pe JOIN public_entities e ON e.id = pe.id LEFT JOIN orgs o ON o.ein = e.ein
 WHERE g.recipient_ein IS NULL AND g.recipient_entity IS NULL AND g.recipient_state = pe.state AND pg_temp.pe_norm(g.recipient_name) = pe.n;
+-- hand-checked names (public_entity_aliases, migration 026), any state when state = ''
+UPDATE grants g SET recipient_ein = o.ein, recipient_entity = a.id,
+       match_method = CASE WHEN o.ein IS NULL THEN 'public' ELSE 'ipeds-ein' END, match_score = 1
+FROM public_entity_aliases a JOIN public_entities e ON e.id = a.id LEFT JOIN orgs o ON o.ein = e.ein
+WHERE g.recipient_ein IS NULL AND g.recipient_entity IS NULL AND g.recipient_kind IS NULL
+  AND org_norm(g.recipient_name) = a.alias_norm AND a.state IN ('', g.recipient_state);
 SELECT match_method, count(*) FROM grants WHERE match_method IN ('public', 'ipeds-ein') GROUP BY 1;
 """
 

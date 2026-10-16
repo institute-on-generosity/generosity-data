@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Load board members into `board_members` (migration 018), then refresh `board_interlocks`.
+"""Load board members into `board_members` (migration 018), then refresh `board_interlocks`
+(matching rules: person_key(), person_middle(), person_suffix(), same-county rule for low confidence: migration 027).
 
   python3 etl/load_board.py
 
