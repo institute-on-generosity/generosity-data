@@ -399,6 +399,7 @@ Precomputed, verified patterns for NomBot's **Insights** tab (audience: philanth
 
 - **One insight = one function:** SQL (stored in `query`), an independent recount, a Vega-Lite v5 chart, text built from the numbers. No figure is hard-coded.
 - **Key numbers:** `stats` (migration 029) holds 2–4 `{label, value}` tiles per insight, preformatted from the same numbers as the headline (`stats(...)` in each function). NomBot's `/research/<slug>` shows them and hides the tiles when null. All 32 filled (Oct 16).
+- **Text:** `headline` is a short claim (≤ ~12 words, one number at most). `points` (migration 030) holds 2–3 bullets (≤ ~15 words, key numbers in `**bold**`, the last one starts "**Why it matters:**"); NomBot shows them on cards and finding pages. `summary` is a one-sentence fallback (≤ 25 words). No semicolons or em dashes; `lint()` prints a `text:` warning when a row breaks a rule.
 - **Verified:** `verified = true` only if the recount agrees and samples are large enough. Weak findings are dropped from the code, not stored.
 - **Shared rules:** grant years 2022–24; no individuals, placeholders, foreign or private-foundation recipients in dollar totals; live grant link rate in `caveats`.
 - **Refresh** (nightly, after `db/refresh.sql`): `python3 etl/mine_insights.py` (~6 min). Updates rows by slug, moves `refreshed_at`, deletes retired slugs. `--dry` prints only, `--only slug,slug` runs some.

@@ -9,7 +9,9 @@
 Each insight is one function: a SQL query (stored in `query`, reproduces the numbers), an independent
 check query, a Vega-Lite chart and text written from the numbers. `verified` is true only when every
 check passes (the check query agrees and sample sizes are large enough). `stats` (migration 029) holds 2-4
-preformatted key numbers for NomBot's finding page, from the same values as the headline. Safe to run nightly after
+preformatted key numbers for NomBot's finding page, from the same values as the headline. `points` (migration 030) holds
+2-3 short bullets (key numbers in **bold**, the last one "Why it matters"); `headline` is a short claim and `summary` a
+one-sentence fallback. `lint()` warns when text breaks those rules. Safe to run nightly after
 `db/refresh.sql`: rows are updated in place by slug and `refreshed_at` moves.
 
 Audience: philanthropic researchers and advisors. Every number is recomputed on each run; text never
@@ -155,6 +157,64 @@ def spct(x, d=0):
 def stats(*pairs):
     """Key numbers for the detail page's stat tiles: [{label, value}], same numbers as the headline."""
     return [{"label": l, "value": v} for l, v in pairs]
+
+
+def bold(x):
+    """Bold a key number in `points` (the only markup NomBot renders)."""
+    return f"**{x}**"
+
+
+WHY = "**Why it matters:** "
+
+
+def cap(s):
+    return s[:1].upper() + s[1:]
+
+
+def frac(x):
+    """Plain fraction for headlines: 0.33 -> 'a third', 0.44 -> 'under half'."""
+    opts = [(1 / 10, "a tenth"), (1 / 6, "a sixth"), (1 / 5, "a fifth"), (1 / 4, "a quarter"), (1 / 3, "a third"),
+            (1 / 2, "half"), (2 / 3, "two thirds"), (3 / 4, "three quarters")]
+    v, w = min(opts, key=lambda o: abs(o[0] - float(x)))
+    return w if abs(v - float(x)) <= 0.02 else ("under " if float(x) < v else "over ") + w
+
+
+def frac_the(x):
+    """'half the', 'a third of the': for 'gets ___ foundation dollars'."""
+    w = frac(x)
+    return f"{w} the" if w.endswith("half") else f"{w} of the"
+
+
+def fold(r):
+    """Growth multiple in words: 2.0 -> 'doubled', 3.0 -> 'tripled', else 'grew 3.2-fold'."""
+    for k, w in ((2, "doubled"), (3, "tripled"), (4, "quadrupled")):
+        if abs(float(r) - k) < 0.1:
+            return w
+    return f"grew {float(r):.1f}-fold"
+
+
+def and_list(xs):
+    xs = list(xs)
+    return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1]
+
+
+def lint(rec):
+    """Style rules for the reader-facing text (warnings only): short headline, 2-3 short bullets ending in
+    'Why it matters', one-sentence summary, no semicolons or em dashes."""
+    words = lambda t: len(t.replace("**", "").split())
+    pts = rec.get("points") or []
+    out = []
+    for f, t in [("headline", rec["headline"]), ("summary", rec["summary"])] + [(f"point {i + 1}", t) for i, t in enumerate(pts)]:
+        if ";" in t or "\u2014" in t:
+            out.append(f"{f}: semicolon or em dash")
+    if words(rec["headline"]) > 13:
+        out.append(f"headline {words(rec['headline'])} words")
+    if words(rec["summary"]) > 25:
+        out.append(f"summary {words(rec['summary'])} words")
+    if not 2 <= len(pts) <= 3 or not pts[-1].startswith(WHY):
+        out.append("points: need 2-3, last 'Why it matters'")
+    out += [f"point {i + 1} {words(t)} words" for i, t in enumerate(pts) if words(t) > 16]
+    return out
 
 
 def close(a, b, rel=0.01, abs_=1e-9):
@@ -386,10 +446,11 @@ def gap_subcause_reach(ctx):
                 ORDER BY f.revenue DESC LIMIT 60""")
     return {
         "stats": stats(("Child care providers funded", pct(care['share_funded'])), ("All mid-size charities", pct(tot['share'])), ("Child care providers", n(care['charities']))),
-        "headline": f"Only {pct(care['share_funded'])} of mid-size child care nonprofits got a foundation grant in 2022–24, versus {pct(tot['share'])} of all mid-size charities",
-        "summary": (f"Of {n(care['charities'])} child day care providers with $250K–$5M in revenue, {n(care['funded'])} received an identifiable private-foundation grant. "
-                    f"Fee-funded fields (senior housing, fire departments, charter schools) sit even lower; {label(top['code']).lower()} tops the list at {pct(top['share_funded'])}. "
-                    "For a donor, low reach means a first gift can matter more, and it also means few peer funders to share diligence with."),
+        "headline": f"Child care gets {frac_the(care['share_funded'] / tot['share'])} foundation reach of other charities",
+        "summary": f"Only {pct(care['share_funded'])} of mid-size child care nonprofits got a foundation grant in 2022–24, versus {pct(tot['share'])} of all mid-size charities.",
+        "points": [f"{bold(pct(care['share_funded']))} of mid-size child care nonprofits got a foundation grant (2022–24)",
+                   f"{bold(pct(tot['share']))} of all mid-size charities did. {cap(label(top['code']).lower())} top the list at {bold(pct(top['share_funded']))}",
+                   WHY + "a first gift counts more, but few peer funders share diligence"],
         "chart": chart,
         "method": ("Public charities (501(c)(3), not private foundations) filing a full Form 990 with $250K–$5M revenue in their newest IRS SOI record, grouped by 3-character NTEE code (300+ charities per code). "
                    "A charity counts as funded if any 990-PF grant from tax years 2022–24 is linked to its EIN. Chart: the 15 lowest and 5 highest codes; dashed line = all mid-size charities."),
@@ -432,10 +493,14 @@ def gap_state_per_capita(ctx):
     ratio = hi["per_resident_year"] / lo1["per_resident_year"]
     return {
         "stats": stats((f"{lo1['name']}, per resident", money(lo1['per_resident_year'])), (f"{hi['name']}, per resident", money(hi['per_resident_year'])), ("Gap", f"{ratio:.0f}x")),
-        "headline": (f"{lo1['name']} and {lo2['name']} receive about {money(lo1['per_resident_year'])} per resident a year in foundation grants; "
-                     f"{hi['name']} receives {money(hi['per_resident_year'])}, {ratio:.0f} times as much"),
-        "summary": (f"Private-foundation dollars follow wealth and institutions, not need: {', '.join(r['name'] for r in rows[:5])} draw the least per person. "
-                    "Advisors weighing place-based giving can treat low-dollar states as under-served by institutional philanthropy."),
+        "headline": f"{hi['name']} gets {ratio:.0f} times {lo1['name']}'s foundation dollars per resident",
+        "summary": (f"{lo1['name']} receives {money(lo1['per_resident_year'])} per resident a year in foundation grants, "
+                    f"{hi['name']} {money(hi['per_resident_year'])}, {ratio:.0f} times as much."),
+        "points": [(f"{bold(money(lo1['per_resident_year']))} per resident a year in {lo1['name']} and {lo2['name']}, the lowest"
+                    if money(lo1['per_resident_year']) == money(lo2['per_resident_year']) else
+                    f"{bold(money(lo1['per_resident_year']))} per resident a year in {lo1['name']}, {bold(money(lo2['per_resident_year']))} in {lo2['name']}, the lowest"),
+                   f"{bold(money(hi['per_resident_year']))} in {hi['name']}, the highest state",
+                   WHY + "foundation dollars follow wealth, not need, so low-dollar states are under-served"],
         "chart": chart,
         "method": ("All 990-PF grants for tax years 2022–24 to US organizations (excluding grants to individuals, unitemized lines, foreign recipients and transfers to other private foundations), "
                    "summed by the recipient's state and divided by 2024 Census population and by 3 years. Colors on a log scale; DC is far off the scale."),
@@ -489,12 +554,15 @@ def gap_county_size(ctx):
     chart = vbar(out, "band", "median_county_per_resident", "County population", "Median county: $ per resident per year",
                  fmt="$,.0f", sort=None, label_fmt="$,.0f")
     ratio = big["median_county_per_resident"] / small["median_county_per_resident"]
+    small_pop = small["population"] / 1e6
     return {
         "stats": stats(("Counties of 10K–50K, per resident", money(small['median_county_per_resident'])), ("Counties of 1M+, per resident", money(big['median_county_per_resident'])), ("Gap", f"{ratio:.0f}x"), ("Small counties", n(small['counties']))),
-        "headline": (f"The typical county of 10,000–50,000 people receives {money(small['median_county_per_resident'])} per resident a year in foundation grants; "
-                     f"the typical county of 1 million+ receives {money(big['median_county_per_resident'])}"),
-        "summary": (f"Across {n(small['counties'])} small counties home to {small['population'] / 1e6:.0f} million people, foundation grants per person run about "
-                    f"{ratio:.0f} times lower than in big metros. Rural capacity, not rural need, is the binding constraint: there are fewer grant-ready organizations to fund."),
+        "headline": f"Big counties get {ratio:.0f} times the foundation dollars per resident of small ones",
+        "summary": (f"The typical county of 10,000–50,000 people gets {money(small['median_county_per_resident'])} per resident a year in foundation grants, "
+                    f"versus {money(big['median_county_per_resident'])} in counties of 1 million+."),
+        "points": [f"{bold(money(small['median_county_per_resident']))} per resident a year in the typical county of 10K–50K people",
+                   f"{bold(money(big['median_county_per_resident']))} in the typical county of 1M+. Small counties hold {bold(f'{small_pop:.0f} million')} people",
+                   WHY + "rural areas lack grant-ready groups, not need"],
         "chart": chart,
         "method": ("2022–24 990-PF grants to US organizations (no individuals, unitemized lines, foreign or private-foundation recipients), placed in a county by recipient ZIP (Census ZCTA crosswalk), "
                    "divided by 2024 county population and by 3 years. Bars show the median county in each population band, so a few rich counties don't drive the result."),
@@ -533,11 +601,12 @@ def gap_county_poverty(ctx):
     sql = COUNTY_SQL + "\n-- then: counties split into fifths by poverty_rate; median per_resident_year in each fifth"
     return {
         "stats": stats(("Poorest fifth, per resident", money(hi['median_county_per_resident'])), ("Least-poor fifth, per resident", money(lo['median_county_per_resident'])), ("Gap", f"{lo['median_county_per_resident'] / hi['median_county_per_resident']:.1f}x")),
-        "headline": (f"The poorest fifth of US counties gets a median {money(hi['median_county_per_resident'])} per resident a year in foundation grants, "
-                     f"about a third of the {money(lo['median_county_per_resident'])} in the least-poor fifth"),
-        "summary": (f"In counties where {hi['poverty_rate_range']} of people live in poverty, the typical county draws "
-                    f"{lo['median_county_per_resident'] / hi['median_county_per_resident']:.1f} times less foundation money per person than affluent counties. "
-                    "Need and institutional dollars run in opposite directions; a donor's marginal dollar likely goes further in the high-poverty fifth."),
+        "headline": f"The poorest counties get {frac_the(hi['median_county_per_resident'] / lo['median_county_per_resident'])} foundation dollars per resident",
+        "summary": (f"The poorest fifth of US counties gets a median {money(hi['median_county_per_resident'])} per resident a year in foundation grants, "
+                    f"versus {money(lo['median_county_per_resident'])} in the least-poor fifth."),
+        "points": [f"{bold(money(hi['median_county_per_resident']))} per resident a year in the typical high-poverty county ({hi['poverty_rate_range']} poor)",
+                   f"{bold(money(lo['median_county_per_resident']))} in the typical county of the least-poor fifth",
+                   WHY + "a donor's dollar likely goes further where poverty is highest"],
         "chart": chart,
         "method": ("Counties ranked by 2023 Census SAIPE poverty rate and split into five equal groups. 2022–24 990-PF grants to US organizations (no individuals, unitemized lines, foreign or "
                    "private-foundation recipients) placed by recipient ZIP, divided by 2024 population and 3 years; bars show each group's median county."),
@@ -574,9 +643,11 @@ def gap_appalachia_map(ctx):
                    for r in app), key=lambda r: float(r["per_resident_year"]))[:500]
     return {
         "stats": stats(("Appalachia, per resident", money(a)), ("Rest of US, per resident", money(b)), ("Appalachian counties", n(len(app)))),
-        "headline": f"Appalachian counties receive {money(a)} per resident a year in foundation grants, {pct(a / b)} of the {money(b)} the rest of the country gets",
-        "summary": (f"The {n(len(app))} counties of the Appalachian Regional Commission's footprint ({sum(r['population'] for r in app) / 1e6:.0f} million people) draw well under half "
-                    "the per-person foundation support of other US counties. The map shows the same pattern across the rural South and Plains."),
+        "headline": f"Appalachia gets {frac_the(a / b)} foundation dollars per person of other US counties",
+        "summary": f"Appalachian counties receive {money(a)} per resident a year in foundation grants, {pct(a / b)} of the {money(b)} the rest of the country gets.",
+        "points": [f"{bold(money(a))} per resident a year across {n(len(app))} Appalachian counties ({sum(r['population'] for r in app) / 1e6:.0f} million people)",
+                   f"{bold(money(b))} per resident in the rest of the country",
+                   WHY + "a gift here fills a gap most foundations leave, as across the rural South"],
         "chart": chart,
         "method": ("2022–24 990-PF grants to US organizations (no individuals, unitemized lines, foreign or private-foundation recipients), placed by recipient ZIP via the Census ZCTA-county file, "
                    "summed per county and divided by 2024 population and 3 years. Appalachia = ARC counties. Map colors on a log scale, capped at $1,000. CSV: the 500 lowest-funded Appalachian counties."),
@@ -654,12 +725,17 @@ def rise_new_charities(ctx):
     last = max(by)
     v = q1(f"SELECT count(*) AS c FROM orgs WHERE subsection = '03' AND ruling BETWEEN '{last}01' AND '{last}12'")
     chg = by[last] / by[last - 2] - 1
+    since = last  # first year of the current unbroken rise
+    while since - 1 in by and by[since - 1] < by[since]:
+        since -= 1
     chart = line(rows, "year", "new_charities", "Year the IRS recognized the charity", "Charities still on the IRS list")
     return {
         "stats": stats((f"New charities in {last}", n(by[last])), (f"Change since {last - 2}", spct(chg))),
-        "headline": f"The IRS recognized {n(by[last])} new charities in {last}, up {pct(chg)} from {last - 2}",
-        "summary": ("New 501(c)(3) formation has climbed every year since 2021. For advisors this means more young, unrated organizations in every cause, "
-                    "and more need for diligence tools that don't depend on years of filings."),
+        "headline": f"New charities are up {pct(chg)} in two years",
+        "summary": f"The IRS recognized {n(by[last])} new charities in {last}, up {pct(chg)} from {last - 2}.",
+        "points": [f"{bold(n(by[last]))} new charities recognized by the IRS in {last}",
+                   f"{bold(n(by[last - 2]))} in {last - 2}" + (f", and the count has risen every year since {since}" if since <= last - 3 else ""),
+                   WHY + "more young, unrated groups to vet without years of filings"],
         "chart": chart,
         "method": "501(c)(3) organizations on the current IRS Business Master File, counted by the year of their IRS ruling (recognition) date, 2015–" + str(last) + ".",
         "caveats": ("Only organizations still on the IRS list are counted: charities that dissolved or lost exemption drop out, so older years are undercounted "
@@ -702,12 +778,13 @@ def rise_new_by_cause(ctx):
                  ORDER BY coalesce(revenue_amt, 0) DESC LIMIT 60""")
     return {
         "stats": stats((f"Growth, {label(top['code'])}", spct(top['growth'])), ("Growth, all new charities", spct(overall)), (f"New {label(top['code']).lower()} in 2025", n(top['new_2025']))),
-        "headline": (f"New {label(top['code']).lower()} charities grew {pct(top['growth'])} from 2023 to 2025 ({n(top['new_2023'])} to {n(top['new_2025'])}), "
-                     f"against {pct(overall)} for all new charities"),
-        "summary": (f"The 2025 cohort leans toward {', '.join(s['state'] for s in states)}, where recent floods, hurricanes and fires hit; most of these groups are small and new. "
-                    "For donors giving after a disaster, many local recovery charities are too new to have a 990 on file."
-                    if top["code"].startswith("M") else
-                    f"The 2025 cohort is concentrated in {', '.join(s['state'] for s in states)}. Fast-growing sub-causes mean more young organizations competing for the same funders."),
+        "headline": f"New {label(top['code']).lower()} charities {fold(1 + top['growth'])} from 2023 to 2025",
+        "summary": (f"New {label(top['code']).lower()} charities grew {pct(top['growth'])} from 2023 to 2025 ({n(top['new_2023'])} to {n(top['new_2025'])}), "
+                    f"against {pct(overall)} for all new charities."),
+        "points": [f"{bold(n(top['new_2023']))} new {label(top['code']).lower()} charities in 2023, {bold(n(top['new_2025']))} in 2025",
+                   f"All new charities grew {bold(pct(overall))}. Most 2025 founders are in {and_list(STATE_NAMES.get(x['state'], x['state']) for x in states)}",
+                   WHY + ("many local recovery groups are too new to have a 990 on file" if top["code"].startswith("M")
+                          else "more young groups now compete for the same funders")],
         "chart": chart,
         "method": ("501(c)(3) organizations on the IRS Business Master File by NTEE code and IRS ruling year, 2025 vs 2023 cohorts (codes with 100+ new charities in each year). "
                    "Chart: 12 fastest-growing and 6 slowest codes; dashed line = all codes."),
@@ -756,13 +833,15 @@ def rise_cause_dollars(ctx):
                         AND EXISTS (SELECT 1 FROM grants a WHERE a.funder_ein = g.funder_ein AND a.tax_year = 2022)
                         AND EXISTS (SELECT 1 FROM grants b WHERE b.funder_ein = g.funder_ein AND b.tax_year = 2024)""")["c"]
     chart = diverging(rows, "cause", "change_capped", "Change in grant dollars, 2024 vs 2022 (same foundations)", rule=overall)
-    q_txt = f" and international affairs {pct(q_['change_capped'])}" if q_ and q_ is not bot and q_ is not top else ""
+    q_txt = f", international affairs {bold(spct(q_['change_capped']))}" if q_ and q_ is not bot and q_ is not top else ""
     return {
         "stats": stats((top['cause'], spct(top['change_capped'])), (bot['cause'], spct(bot['change_capped'])), ("All causes", spct(overall))),
-        "headline": (f"Same foundations, two years apart: grants to {top['cause'].lower()} rose {pct(top['change_capped'])} from 2022 to 2024, "
-                     f"while {bot['cause'].lower()} {'fell' if bot['change_capped'] < 0 else 'rose only'} {pct(abs(bot['change_capped']))}{q_txt}"),
-        "summary": (f"Across foundations that filed for both years, giving to linked grantees rose {pct(overall)} overall. "
-                    "Shifts this large inside a fixed set of funders signal changing priorities, not just new money; advisors can expect more competition in fast-rising causes."),
+        "headline": f"{cap(top['cause'].lower())} grants rose fastest, up {pct(top['change_capped'])} in two years",
+        "summary": (f"Among foundations that filed both years, grants to {top['cause'].lower()} rose {pct(top['change_capped'])} from 2022 to 2024, "
+                    f"versus {pct(overall)} for all causes."),
+        "points": [f"{bold(spct(top['change_capped']))} to {top['cause'].lower()} from the same foundations, 2022 to 2024",
+                   f"{bold(spct(overall))} across all causes. {cap(bot['cause'].lower())} {bold(spct(bot['change_capped']))}{q_txt}",
+                   WHY + "the same funders are shifting priorities, so rising causes get crowded"],
         "chart": chart,
         "method": ("Foundations with 990-PF grants in both tax years 2022 and 2024; their grants to linked public charities, grouped by the recipient's NTEE major group. "
                    "Each grant capped at $5M so one mega-gift can't drive a cause (uncapped change in the CSV). Causes with $50M+ capped dollars in 2022."),
@@ -795,9 +874,11 @@ def rise_disaster(ctx):
     orgs = q("SELECT ein FROM orgs WHERE subsection = '03' AND ntee_cd LIKE 'M20%' AND ruling LIKE '2025%' ORDER BY coalesce(revenue_amt, 0) DESC LIMIT 60")
     return {
         "stats": stats(("New in 2023", n(a)), ("New in 2025", n(b)), ("Growth", f"{b / a:.1f}x")),
-        "headline": f"New disaster-relief charities grew {b / a:.1f}-fold: {n(a)} recognized in 2023, {n(b)} in 2025, led by {', '.join(STATE_NAMES[r['state']] for r in top)}",
-        "summary": ("Each major disaster now spins up dozens of new local charities (recent hurricanes, floods and wildfires). "
-                    "Most are too new to have filed a 990, so donors should check the IRS list and ask for a budget before giving."),
+        "headline": f"New disaster-relief charities {fold(b / a)} in two years",
+        "summary": f"New disaster-relief charities grew from {n(a)} recognized in 2023 to {n(b)} in 2025, led by {and_list(STATE_NAMES[r['state']] for r in top)}.",
+        "points": [f"{bold(n(a))} new disaster-relief charities in 2023, {bold(n(b))} in 2025",
+                   f"{and_list(STATE_NAMES[r['state']] for r in top)} lead, after recent hurricanes, floods and fires",
+                   WHY + "most are too new to have a 990, so ask for a budget"],
         "chart": chart,
         "method": "501(c)(3) organizations with NTEE code M20 (disaster preparedness and relief services) on the IRS Business Master File, by state and IRS ruling year 2023 vs 2025. Chart: the 10 states with the most 2025 rulings.",
         "caveats": "Ruling year counts only organizations still listed. NTEE codes are assigned from the IRS application; some relief groups are coded elsewhere (human services, community improvement).",
@@ -841,12 +922,13 @@ def rise_intermediaries(ctx):
     for x in long:
         x["billions"] = round(x["amount"] / 1e9, 2)
     chart = vbar(long, "year", "billions", "Tax year", "Grant dollars, $ billions (same foundations)", fmt="$,.1f", xoffset="recipient", color_title=None)
-    names = ", ".join(t["name"].title() for t in top[:3])
     return {
         "stats": stats(("To other grantmakers", spct(g_int)), ("To all other charities", spct(g_oth)), ("Grantmaker share, 2024", pct(b['grantmaker_share']))),
-        "headline": f"Foundation grants to other grantmakers rose {pct(g_int)} from 2022 to 2024, versus {pct(g_oth)} to all other charities",
-        "summary": (f"Payments to donor-advised fund sponsors, community and public foundations and federated funds made up {pct(b['grantmaker_share'])} of linked 2024 grant dollars from the same foundations. "
-                    f"Largest increases: {names}. Money parked in intermediaries reaches charities later and is harder to trace, which matters for any 'where did the money go' analysis."),
+        "headline": f"Foundation grants to other grantmakers rose {pct(g_int)} in two years",
+        "summary": f"Foundation grants to other grantmakers rose {pct(g_int)} from 2022 to 2024, versus {pct(g_oth)} to all other charities.",
+        "points": [f"{bold(spct(g_int))} to DAF sponsors, community foundations and federated funds, 2022 to 2024",
+                   f"{bold(spct(g_oth))} to all other charities. Grantmakers got {bold(pct(b['grantmaker_share']))} of 2024 dollars",
+                   WHY + "parked money reaches charities later and is harder to trace"],
         "chart": chart,
         "method": ("Foundations with 990-PF grants in both tax years 2022 and 2024; their grants to linked public charities (not private foundations), split by whether the recipient's NTEE code is T "
                    "(philanthropy, voluntarism and grantmaking: DAF sponsors, community foundations, public foundations, federated giving)."),
@@ -885,9 +967,12 @@ def flow_pharma(ctx):
     chart = hbar(rows[:15], "funder", "billions", "Reported grants, tax years 2022–24 ($ billions)", fmt="$,.1f")
     return {
         "stats": stats(("Patient-assistance grants", money(pap, 0)), ("Share of all grant dollars", pct(pap / total)), ("Foundations", n(len(rows)))),
-        "headline": f"Drug-company patient-assistance foundations reported {money(pap, 0)} in grants for 2022–24, {pct(pap / total)} of all private-foundation grant dollars",
-        "summary": (f"{len(rows)} corporate patient-assistance foundations ({', '.join(r['funder'] for r in rows[:4])} and others) give mostly donated medicine to individual patients. "
-                    "Any 'total foundation giving' figure that includes them overstates grants to charities by roughly a fifth; strip them out before benchmarking."),
+        "headline": f"Drug-company patient aid is {frac(pap / total)} of all foundation grant dollars",
+        "summary": (f"Drug-company patient-assistance foundations reported {money(pap, 0)} in grants for 2022–24, {pct(pap / total)} of all private-foundation grant dollars, "
+                    "mostly donated medicine."),
+        "points": [f"{bold(money(pap, 0))} in 2022–24 grants from {bold(n(len(rows)))} patient-assistance foundations",
+                   f"Mostly donated medicine to patients. Largest: {rows[0]['funder']}",
+                   WHY + "strip them out before benchmarking giving to charities"],
         "chart": chart,
         "method": ("990-PF Part XV grants for tax years 2022–24. Patient-assistance foundations: name says patient assistance, patient foundation or access, or '… Cares' foundation, "
                    "80%+ of grant dollars go to individuals or unitemized lines, and $10M+ in grants. Share = their total over all 990-PF grant dollars in the same years."),
@@ -930,10 +1015,12 @@ def flow_out_of_state(ctx):
                       tooltip_extra=[("received", "quantitative", "Received 2022–24", "$,.0f")])
     return {
         "stats": stats(*((f"{h['name']}, from out of state", pct(h['out_of_state_share'])) for h in hi[:2]), (f"{lo['name']}, from out of state", pct(lo['out_of_state_share']))),
-        "headline": (f"{hi[0]['name']}, {hi[1]['name']} and {hi[2]['name']} charities get {pct(min(h['out_of_state_share'] for h in hi))}+ of their foundation dollars from out-of-state funders; "
-                     f"{lo['name']} charities get {pct(lo['out_of_state_share'])}"),
-        "summary": ("Small-population states depend on foundations based elsewhere, whose priorities can shift without local accountability. "
-                    f"States with big home-grown foundations ({', '.join(r['name'] for r in states[-4:])}) fund their own. Advisors in import-dependent states should map who funds locally before advising a gift."),
+        "headline": f"{and_list(h['name'] for h in hi)} run on out-of-state foundation money",
+        "summary": (f"{and_list(h['name'] for h in hi)} charities get {pct(min(h['out_of_state_share'] for h in hi))}+ of their foundation dollars "
+                    f"from out-of-state funders, versus {pct(lo['out_of_state_share'])} in {lo['name']}."),
+        "points": [f"{bold(pct(min(h['out_of_state_share'] for h in hi)) + '+')} of their charities' foundation dollars come from other states",
+                   f"{bold(pct(lo['out_of_state_share']))} in {lo['name']}, the most self-funded state",
+                   WHY + "outside funders can shift priorities without local accountability"],
         "chart": chart,
         "method": ("2022–24 990-PF grants to US organizations (no individuals, unitemized lines, foreign or private-foundation recipients), by recipient state; "
                    "out-of-state = the foundation's filing address is in another state. DC (97%) is off the color scale."),
@@ -970,9 +1057,12 @@ def flow_net(ctx):
     chart = diverging(shown, "name", "net_billions", "Received minus given by the state's foundations, 2022–24 ($ billions)", fmt="$,.1f")
     return {
         "stats": stats((f"{exp['name']}, net exported", money(-exp['net'])), (f"{imp['name']}, net imported", money(imp['net']))),
-        "headline": f"{exp['name']}'s foundations gave {money(-exp['net'])} more than its charities received in 2022–24; {imp['name']} took in {money(imp['net'])} more than its funders gave",
-        "summary": (f"{exp['name']} is the biggest net exporter of foundation money (the Gates Foundation is there); {imp['name']} and {imp2['name']} are the biggest importers, "
-                    "as headquarters of national and policy groups. Net flows show which places set the agenda for philanthropy elsewhere."),
+        "headline": f"{exp['name']} exports the most foundation money, and {imp['name']} imports the most",
+        "summary": (f"{exp['name']}'s foundations gave {money(-exp['net'])} more than its charities received in 2022–24, "
+                    f"while {imp['name']} took in {money(imp['net'])} more than its funders gave."),
+        "points": [f"{bold(money(-exp['net']))} more given than received in {exp['name']} (2022–24)" + (", home of the Gates Foundation" if exp["state"] == "WA" else ""),
+                   f"{bold(money(imp['net']))} more received than given in {imp['name']}. {imp2['name']} is next",
+                   WHY + "a few places set the agenda for philanthropy everywhere else"],
         "chart": chart,
         "method": ("2022–24 990-PF grants to US organizations (no individuals, unitemized lines, foreign or private-foundation recipients). Given = grants by foundations filing from the state; "
                    "received = grants to recipients addressed in the state. Chart: 8 biggest exporters and importers."),
@@ -1015,10 +1105,12 @@ def flow_concentration(ctx):
                  highlight=("major", "B"), tooltip_extra=[("grantees", "quantitative", ","), ("top_1pct_orgs", "quantitative", ",")])
     return {
         "stats": stats(("Education, top 1% share", pct(b['top_1pct_share'])), ("Human services, top 1% share", pct(p['top_1pct_share'])), ("Top 1% of education grantees", n(b['top_1pct_orgs']))),
-        "headline": (f"In education, {n(b['top_1pct_orgs'])} organizations (the top 1% of grantees) took {pct(b['top_1pct_share'])} of foundation dollars in 2022–24; "
-                     f"in human services the top 1% took {pct(p['top_1pct_share'])}"),
-        "summary": (f"Foundation money in {', '.join(r['cause'].lower() for r in rows[:3])} pools at a few large institutions; "
-                    f"{', '.join(r['cause'].lower() for r in rows[-3:])} are far more evenly spread. A donor seeking leverage in a top-heavy cause should look below the top 1%."),
+        "headline": f"The top 1% of education grantees take {frac(b['top_1pct_share'])} of foundation dollars",
+        "summary": (f"In education, {n(b['top_1pct_orgs'])} organizations (the top 1% of grantees) took {pct(b['top_1pct_share'])} of foundation dollars in 2022–24, "
+                    f"versus {pct(p['top_1pct_share'])} in human services."),
+        "points": [f"{bold(n(b['top_1pct_orgs']))} education groups took {bold(pct(b['top_1pct_share']))} of 2022–24 foundation dollars",
+                   f"The top 1% took {bold(pct(p['top_1pct_share']))} in human services. {cap(rows[-1]['cause'].lower())} is the most evenly spread",
+                   WHY + "in top-heavy causes, look below the top 1% for leverage"],
         "chart": chart,
         "method": ("990-PF grants for tax years 2022–24 linked to a public charity, summed per recipient and grouped by NTEE major group (causes with 1,000+ grantees). "
                    "Top 1% = the highest-funded 1% of grantees in that cause (rounded up)."),
@@ -1054,10 +1146,12 @@ def flow_pf_transfers(ctx):
     chart = hbar(rows[:12], "pair", "billions", "Grants 2022–24 ($ billions)", fmt="$,.1f")
     return {
         "stats": stats(("Foundation to foundation", money(tot)), ("Share of linked dollars", pct(tot / linked)), ("Foundations involved", n(funders))),
-        "headline": (f"{money(tot)} ({pct(tot / linked)}) of linked foundation grant dollars in 2022–24 went to another private foundation; "
-                     f"{money(top['amount'])} was {top['funder'].title()} paying {top['recipient'].title()}"),
-        "summary": (f"{n(funders)} foundations made grants to other private foundations, mostly within the same family (a trust funding its operating foundation). "
-                    "These transfers count as giving on paper but don't reach charities until the second foundation pays out; exclude them from flow totals to avoid double counting."),
+        "headline": f"{cap(frac(tot / linked))} of traceable foundation grant dollars go to another foundation",
+        "summary": (f"{money(tot)} ({pct(tot / linked)}) of linked foundation grant dollars in 2022–24 went to another private foundation, "
+                    "mostly within the same family."),
+        "points": [f"{bold(money(tot))} in 2022–24 grants went from one private foundation to another",
+                   f"{bold(money(top['amount']))} of it was {top['funder'].title()} paying {top['recipient'].title()}",
+                   WHY + "exclude these transfers from flow totals to avoid double counting"],
         "chart": chart,
         "method": "990-PF grants for tax years 2022–24 whose linked recipient is itself a private foundation (IRS foundation codes 02–04). Share = over all grant dollars linked to any organization.",
         "caveats": ctx.link + " Unlinked transfers aren't counted, so the total is a floor.",
@@ -1091,9 +1185,12 @@ def track_invite(ctx):
                  fmt=".0%", label_fmt=".0%")
     return {
         "stats": stats(("Closed to applications", pct(allr['share'])), ("Their share of grant dollars", pct(allr['dollars'])), ("Closed, $1M–10M foundations", pct(mid['invite_only_share'])), ("Closed, $1B+ foundations", pct(big['invite_only_share']))),
-        "headline": f"{pct(allr['share'])} of US private foundations say they don't accept unsolicited applications; they pay {pct(allr['dollars'])} of foundation grant dollars",
-        "summary": (f"Closed doors are most common at $1M–10M family foundations ({pct(mid['invite_only_share'])}); among $1B+ foundations it is {pct(big['invite_only_share'])}. "
-                    "For nonprofits, relationships (often through advisors and board members) are the main way in to most foundation money."),
+        "headline": f"{pct(allr['share'])} of foundations won't take unsolicited applications",
+        "summary": (f"{pct(allr['share'])} of US private foundations say they don't accept unsolicited applications, "
+                    f"and they pay {pct(allr['dollars'])} of foundation grant dollars."),
+        "points": [f"Closed foundations pay {bold(pct(allr['dollars']))} of all foundation grant dollars",
+                   f"{bold(pct(mid['invite_only_share']))} of $1M–10M foundations are closed, {bold(pct(big['invite_only_share']))} of $1B+ ones",
+                   WHY + "relationships, often through advisors and boards, are the way in"],
         "chart": chart,
         "method": ("Newest 990-PF per foundation (mostly tax years 2023–24): Part XV line 2 box 'only makes contributions to preselected charitable organizations and does not accept unsolicited requests'. "
                    "Dollar share = grants paid in that return."),
@@ -1129,9 +1226,12 @@ def track_gos(ctx):
     chart = vbar(long, "band", "share", "Foundation assets", "Labeled general or operating support", fmt=".0%", xoffset="measure", color_title=None)
     return {
         "stats": stats(("General support, $1B+", pct(big['general_share_of_dollars'])), ("General support, $1M–10M", pct(mid['general_share_of_dollars']))),
-        "headline": f"$1B+ foundations label only {pct(big['general_share_of_dollars'])} of their grant dollars as general operating support, versus {pct(mid['general_share_of_dollars'])} at $1M–10M foundations",
-        "summary": (f"Big foundations make plenty of small unrestricted grants ({pct(big['general_share_of_grants'])} of their grants), but their large grants are restricted to projects. "
-                    "Unrestricted money is what lets nonprofits cover overhead, so for operating needs, mid-size family foundations are the more likely source."),
+        "headline": f"Billion-dollar foundations give just {pct(big['general_share_of_dollars'])} of dollars as general support",
+        "summary": (f"$1B+ foundations label only {pct(big['general_share_of_dollars'])} of their grant dollars as general operating support, "
+                    f"versus {pct(mid['general_share_of_dollars'])} at $1M–10M foundations."),
+        "points": [f"{bold(pct(mid['general_share_of_dollars']))} of dollars at $1M–10M foundations are general support",
+                   f"Big funders' unrestricted grants are small ones ({bold(pct(big['general_share_of_grants']))} of grants, few dollars)",
+                   WHY + "for overhead, mid-size family foundations are the likelier source"],
         "chart": chart,
         "method": ("990-PF Part XV grants for tax years 2022–24 to organizations (no individuals, unitemized lines or foreign recipients). General support = the purpose text mentions general, "
                    "operating, unrestricted, annual fund or core support. Foundation size = fair market value of assets on the newest return."),
@@ -1161,10 +1261,12 @@ def track_payout(ctx):
     chart = vbar(rows, "band", "share_under_5pct", "Foundation assets", "Share whose grants were under 5% of assets", fmt=".0%", label_fmt=".0%")
     return {
         "stats": stats(("$1B+ paying under 5%", pct(big['share_under_5pct'])), ("Median payout, $1B+", pct(big['median_grants_to_assets'], 1)), ("Median payout, smallest", pct(small['median_grants_to_assets'], 1))),
-        "headline": f"{pct(big['share_under_5pct'])} of $1B+ foundations paid grants worth less than 5% of their assets in their latest year; the median paid {pct(big['median_grants_to_assets'], 1)}",
-        "summary": (f"The legal 5% payout rule counts administrative costs and uses prior-year average assets, so this isn't a compliance test. But it shows that the largest foundations "
-                    f"grant a smaller slice of their wealth (median {pct(big['median_grants_to_assets'], 1)}) than small ones ({pct(small['median_grants_to_assets'], 1)}), "
-                    "a useful benchmark when advising a family on its own payout policy."),
+        "headline": f"{pct(big['share_under_5pct'])} of billion-dollar foundations granted under 5% of assets",
+        "summary": (f"{pct(big['share_under_5pct'])} of $1B+ foundations paid grants worth less than 5% of their assets in their latest year, "
+                    f"with a median of {pct(big['median_grants_to_assets'], 1)}."),
+        "points": [f"{bold(pct(big['median_grants_to_assets'], 1))} of assets granted by the median $1B+ foundation in its latest year",
+                   f"{bold(pct(small['median_grants_to_assets'], 1))} at the median foundation under $1M",
+                   WHY + "not a compliance test, but a benchmark for a family's own payout"],
         "chart": chart,
         "method": "Newest 990-PF per foundation with $100K+ assets: total grants paid (Part XV) divided by end-of-year fair market value of assets. Grouped by asset size.",
         "caveats": "Qualifying distributions also include administrative and program costs, and the 5% minimum applies to prior-year average net investment assets; a strong market year raises end-of-year assets.",
@@ -1201,9 +1303,11 @@ def track_one_grantee(ctx):
     chart = vbar(rows, "band", "share_half_to_one_grantee", "Foundation assets", "Share giving over half its dollars to one grantee", fmt=".0%", label_fmt=".0%")
     return {
         "stats": stats(("$100M–1B, half to one grantee", pct(big['share_half_to_one_grantee'])), ("Under $1M, half to one grantee", pct(small['share_half_to_one_grantee']))),
-        "headline": f"{pct(big['share_half_to_one_grantee'])} of $100M–1B foundations gave more than half of their 2022–24 grant dollars to a single organization",
-        "summary": (f"Many sizable foundations are effectively endowments for one university, hospital or family charity; among foundations under $1M it is {pct(small['share_half_to_one_grantee'])}. "
-                    "Their asset size overstates how much is open to other applicants, so check a funder's grant list, not just its assets."),
+        "headline": f"{cap(frac(big['share_half_to_one_grantee']))} of $100M–1B foundations give most of their money to one group",
+        "summary": f"{pct(big['share_half_to_one_grantee'])} of $100M–1B foundations gave more than half of their 2022–24 grant dollars to a single organization.",
+        "points": [f"{bold(pct(big['share_half_to_one_grantee']))} of $100M–1B foundations gave over half their 2022–24 dollars to one group",
+                   f"{bold(pct(small['share_half_to_one_grantee']))} of foundations under $1M did the same",
+                   WHY + "assets overstate what's open to applicants, so check the grant list"],
         "chart": chart,
         "method": ("990-PF grants for tax years 2022–24 to organizations (no individuals, unitemized lines or foreign recipients), summed per foundation and recipient "
                    "(recipient = linked EIN, else name + state). Size = assets on the newest return."),
@@ -1236,9 +1340,12 @@ def track_audit(ctx):
     chart = vbar(long, "band", "share", "Charity revenue (newest 990)", "Share of charities", fmt=".0%", xoffset="practice", color_title=None)
     return {
         "stats": stats(("Audited, $500K–2M revenue", pct(mid['audited'])), ("Whistleblower policy", pct(mid['whistleblower_policy']))),
-        "headline": f"Only {pct(mid['audited'])} of charities with $500K–2M in revenue report audited financial statements; {pct(mid['whistleblower_policy'])} have a whistleblower policy",
-        "summary": ("Below about $2M in revenue, most charities have no independent audit, so donors rely on the 990 and their own diligence. "
-                    "Ask for a review or compilation instead of an audit rather than ruling small groups out."),
+        "headline": f"Only {pct(mid['audited'])} of $500K–2M charities have audited financials",
+        "summary": (f"Only {pct(mid['audited'])} of charities with $500K–2M in revenue report audited financial statements, "
+                    f"and {pct(mid['whistleblower_policy'])} have a whistleblower policy."),
+        "points": [f"{bold(pct(rows[2]['audited']))} of $2M–10M charities are audited, so the gap closes with size",
+                   f"{bold(pct(mid['whistleblower_policy']))} of $500K–2M charities have a whistleblower policy, {bold(pct(mid['conflict_policy']))} a conflict policy",
+                   WHY + "ask small groups for a review or compilation instead"],
         "chart": chart,
         "method": "Newest full Form 990 per 501(c)(3): Part XII line 2b (financial statements audited) and Part VI lines 12a and 13 (policies), grouped by current-year revenue.",
         "caveats": "990-EZ filers (under $200K revenue) don't answer these questions and aren't included. State law requires audits above thresholds that vary by state.",
@@ -1278,9 +1385,11 @@ def track_renewal(ctx):
                  rule=float(allr["r"]), tooltip_extra=[("pairs", "quantitative", ",")])
     return {
         "stats": stats(("Funded again within 2 years", pct(allr['r'])), (hi['cause'], pct(hi['renewal_rate'])), (lo['cause'], pct(lo['renewal_rate']))),
-        "headline": f"{pct(allr['r'])} of 2022 foundation grantees were funded again by the same foundation within two years; {hi['cause'].lower()} {pct(hi['renewal_rate'])}, {lo['cause'].lower()} {pct(lo['renewal_rate'])}",
-        "summary": ("Foundation relationships are sticky: most grantees are repeat bets. "
-                    "A first grant is the hard part, and fields with lower renewal see more one-off, event or capital gifts."),
+        "headline": f"{pct(allr['r'])} of foundation grantees are funded again within two years",
+        "summary": f"{pct(allr['r'])} of 2022 foundation grantees were funded again by the same foundation within two years.",
+        "points": [f"{bold(pct(hi['renewal_rate']))} renewal in {hi['cause'].lower()}, the highest",
+                   f"{bold(pct(lo['renewal_rate']))} in {lo['cause'].lower()}, the lowest",
+                   WHY + "the first grant is the hard part, then funders tend to stay"],
         "chart": chart,
         "method": ("Pairs of foundation and linked grantee with a grant in tax year 2022, among foundations that also filed grants for 2024; renewed = another grant to the same EIN in 2023 or 2024. "
                    "Grouped by the grantee's NTEE major group (2,000+ pairs)."),
@@ -1329,10 +1438,12 @@ def aff_board_size(ctx):
     chart = vbar(long, "band", "share", "Foundation assets", "Share", fmt=".0%", xoffset="measure", color_title=None)
     return {
         "stats": stats(("$1B+ paying a board-linked group", pct(big['share_with_board_linked_grantee'])), ("Board-linked grants", money(tot['amount'])), ("Foundations", n(tot['funders']))),
-        "headline": (f"{pct(big['share_with_board_linked_grantee'])} of $1B+ foundations paid an organization that shares their board members in 2022–24; "
-                     f"small foundations with such ties sent a median {pct(small['median_share_of_giving_when_linked'])} of their giving to those organizations"),
-        "summary": (f"{n(tot['funders'])} foundations made {money(tot['amount'])} in grants to {n(tot['pairs'])} organizations whose boards they share, excluding sister organizations and bank trustees. "
-                    "That is legal and often intended, but for a small foundation it can mean most money stays within the board's own circle; worth asking about in diligence."),
+        "headline": f"{pct(big['share_with_board_linked_grantee'])} of billion-dollar foundations fund groups that share their board",
+        "summary": (f"{pct(big['share_with_board_linked_grantee'])} of $1B+ foundations paid an organization that shares their board members in 2022–24, "
+                    "excluding sister organizations and bank trustees."),
+        "points": [f"{bold(money(tot['amount']))} from {bold(n(tot['funders']))} foundations to groups sharing their board members",
+                   f"Small foundations with such ties sent a median {bold(pct(small['median_share_of_giving_when_linked']))} of giving there",
+                   WHY + "legal, but ask whether money stays in the board's own circle"],
         "chart": chart,
         "method": ("High-confidence hidden board links (generosity-data board_interlocks: relation = 'link', confidence = 'high', kind = 'funder-grantee'): a foundation and a grantee in the same state "
                    "list the same person by first and last name, outside sister organizations and bank trusts. Grants for tax years 2022–24; size = foundation assets on the newest return."),
@@ -1379,9 +1490,12 @@ def aff_board_cause(ctx):
                  tooltip_extra=[("board_linked_dollars", "quantitative", "$,.0f"), ("board_linked_grantees", "quantitative", ",")])
     return {
         "stats": stats((f"{top['cause']}, board-linked", pct(top['board_linked_share'], 1)), ("All causes", pct(allshare, 1)), ("Ratio", f"{top['board_linked_share'] / allshare:.1f}x")),
-        "headline": f"{top['cause']} charities get {pct(top['board_linked_share'], 1)} of their foundation dollars from funders that share board members with them, {top['board_linked_share'] / allshare:.1f} times the {pct(allshare, 1)} average",
-        "summary": (f"{top['cause']} and {rows[1]['cause'].lower()} charities are disproportionately funded by their own board members' foundations. "
-                    "For an advisor, a grantee whose foundation support comes mostly from board-linked funders has a narrower, more fragile base than its revenue suggests."),
+        "headline": f"{cap(top['cause'].lower())} charities lean most on their own board members' foundations",
+        "summary": (f"{top['cause']} charities get {pct(top['board_linked_share'], 1)} of their foundation dollars from funders sharing board members, "
+                    f"{top['board_linked_share'] / allshare:.1f} times the {pct(allshare, 1)} average."),
+        "points": [f"{bold(pct(top['board_linked_share'], 1))} of their foundation dollars come from funders sharing board members",
+                   f"{bold(pct(allshare, 1))} across all causes. {cap(rows[1]['cause'].lower())} is next at {bold(pct(rows[1]['board_linked_share'], 1))}",
+                   WHY + "board-linked support is a narrower base than revenue suggests"],
         "chart": chart,
         "method": ("990-PF grants for tax years 2022–24 linked to public charities, by the recipient's NTEE major group (causes with $500M+). Board-linked = a high-confidence hidden board link "
                    "between funder and grantee in board_interlocks (relation 'link', confidence 'high'; sister organizations and bank trustees excluded). Dashed line = all causes."),
@@ -1420,9 +1534,12 @@ def aff_insider(ctx):
                 WHERE business_with_insiders AND cy_revenue >= 1e8 ORDER BY cy_revenue DESC LIMIT 60""")
     return {
         "stats": stats(("$100M+ with insider deals", pct(big['business_with_insiders'])), ("Under $500K", pct(small['business_with_insiders']))),
-        "headline": f"{pct(big['business_with_insiders'])} of $100M+ charities report business deals with board members, officers or their families, versus {pct(small['business_with_insiders'])} of those under $500K",
-        "summary": (f"Insider business is disclosed, not forbidden, and big organizations have more vendors to overlap with. {pct(big['family_or_business_ties'])} of the largest also report family or business ties among officers. "
-                    "Schedule L names the people and amounts, so read it before a major gift."),
+        "headline": f"{pct(big['business_with_insiders'])} of $100M+ charities do business with their own insiders",
+        "summary": (f"{pct(big['business_with_insiders'])} of $100M+ charities report business deals with board members, officers or their families, "
+                    f"versus {pct(small['business_with_insiders'])} of those under $500K."),
+        "points": [f"{bold(pct(small['business_with_insiders']))} of charities under $500K report such deals. Disclosed, not forbidden",
+                   f"{bold(pct(big['family_or_business_ties']))} of $100M+ charities also report family or business ties among officers",
+                   WHY + "Schedule L names the people and amounts. Read it before a major gift"],
         "chart": chart,
         "method": "Newest full Form 990 per 501(c)(3): Part IV line 28 (business transactions with interested persons), Part VI line 2 (family or business relationships among officers and directors) and Part IV line 26 (loans).",
         "caveats": "Self-reported; reporting thresholds (e.g. $100K+ per transaction) make small deals invisible, which lowers the rate for small charities. 990-EZ filers aren't included.",
@@ -1457,9 +1574,12 @@ def aff_family(ctx):
                  rule=float(allr["a"]), tooltip_extra=[("charities", "quantitative", ",")])
     return {
         "stats": stats((top['cause'], pct(top['family_or_business_ties'])), (bot['cause'], pct(bot['family_or_business_ties']))),
-        "headline": f"{pct(top['family_or_business_ties'])} of mid-size {top['cause'].lower()} charities report family or business ties among their leaders, versus {pct(bot['family_or_business_ties'])} in {bot['cause'].lower()}",
-        "summary": (f"{top['cause']} and {second['cause'].lower()} groups are often founded and run by one family or diaspora network. "
-                    "Family-led boards aren't a red flag on their own, but they raise the bar for independent oversight; check who sets pay and approves budgets."),
+        "headline": f"{cap(frac(top['family_or_business_ties']))} of {top['cause'].lower()} charities report family ties among leaders",
+        "summary": (f"{pct(top['family_or_business_ties'])} of mid-size {top['cause'].lower()} charities report family or business ties among their leaders, "
+                    f"versus {pct(bot['family_or_business_ties'])} in {bot['cause'].lower()}."),
+        "points": [f"{bold(pct(top['family_or_business_ties']))} of mid-size {top['cause'].lower()} charities, {bold(pct(second['family_or_business_ties']))} in {second['cause'].lower()}",
+                   f"{bold(pct(bot['family_or_business_ties']))} in {bot['cause'].lower()}, the lowest",
+                   WHY + "not a red flag, but check who sets pay and approves budgets"],
         "chart": chart,
         "method": "Newest full Form 990 per 501(c)(3) with $500K–$10M revenue: Part VI line 2 (any officer, director, trustee or key employee has a family or business relationship with another). By NTEE major group (1,000+ charities); dashed line = all.",
         "caveats": "Self-reported yes/no; doesn't say how many people are related.",
@@ -1486,14 +1606,17 @@ def aff_density(ctx):
     for r in rows:
         r["name"] = STATE_NAMES.get(r["state"], r["state"])
     hi, lo = rows[0], rows[-1]
+    hi_links, lo_links = hi["links_per_1000"], lo["links_per_1000"]
     v = q1(f"SELECT count(*) AS c FROM board_interlocks WHERE relation = 'link' AND confidence = 'high' AND state = '{hi['state']}'")
     chart = state_map(rows, "links_per_1000", "Hidden board links per 1,000 charities", fmt=",.0f", scale={"scheme": "purples"},
                       tooltip_extra=[("links", "quantitative", "High-confidence links", ","), ("charities", "quantitative", "Charities with board data", ",")])
     return {
         "stats": stats((f"{hi['name']}, links per 1,000", f"{hi['links_per_1000']:.0f}"), (f"{lo['name']}, links per 1,000", f"{lo['links_per_1000']:.0f}")),
-        "headline": f"{hi['name']} has {hi['links_per_1000']:.0f} high-confidence hidden board links per 1,000 charities; {lo['name']} has {lo['links_per_1000']:.0f}",
-        "summary": ("Where the same people sit on many boards, a few leaders shape a state's nonprofit agenda, and a single departure ripples further. "
-                    "Dense networks also make independent diligence harder: references and co-funders are often the same people."),
+        "headline": f"{hi['name']} has the most tightly linked nonprofit boards",
+        "summary": f"{hi['name']} has {hi['links_per_1000']:.0f} high-confidence hidden board links per 1,000 charities, versus {lo['links_per_1000']:.0f} in {lo['name']}.",
+        "points": [f"{bold(f'{hi_links:.0f}')} hidden board links per 1,000 charities in {hi['name']}",
+                   f"{bold(f'{lo_links:.0f}')} in {lo['name']}, the lowest",
+                   WHY + "a few leaders shape the agenda, and references are often the same people"],
         "chart": chart,
         "method": ("High-confidence hidden board links (board_interlocks relation 'link', confidence 'high': two organizations in the same state sharing 2+ board members, or one plus a grant between them; "
                    "sister organizations and bank trustees excluded), per 1,000 501(c)(3)s with board data in the state."),
@@ -1542,10 +1665,12 @@ def stress_gov_cash(ctx):
                  AND coalesce(f.government_grants, 0) >= 0.5 * f.cy_revenue AND f.cash * 12.0 / f.cy_expenses < 3 ORDER BY f.cy_revenue DESC LIMIT 60""")
     return {
         "stats": stats(("Half from government", pct(top['gov_majority'])), ("Also under 3 months of cash", pct(top['gov_and_thin_cash'])), ("All charities, both", pct(allr['gov_and_thin_cash'], 1))),
-        "headline": (f"{pct(top['gov_majority'])} of {label(top['code']).lower()} get half their revenue from government grants, and {pct(top['gov_and_thin_cash'])} also have under three months of cash, "
-                     f"the most exposed sub-cause to a federal funding freeze"),
-        "summary": (f"Across all charities only {pct(allr['gov_and_thin_cash'], 1)} combine government dependence with thin reserves. "
-                    "When federal or state grants pause (as in 2025), these organizations have weeks, not months, of runway; bridge funding from private donors can keep doors open."),
+        "headline": f"{cap(label(top['code']).lower())} are the most exposed to a federal funding freeze",
+        "summary": (f"{pct(top['gov_majority'])} of {label(top['code']).lower()} get half their revenue from government grants, "
+                    f"and {pct(top['gov_and_thin_cash'])} also hold under three months of cash."),
+        "points": [f"{bold(pct(top['gov_majority']))} get half or more of their revenue from government grants",
+                   f"{bold(pct(top['gov_and_thin_cash']))} also hold under three months of cash, versus {bold(pct(allr['gov_and_thin_cash'], 1))} of all charities",
+                   WHY + "in a grant freeze, private bridge funding can keep doors open"],
         "chart": chart,
         "method": ("Newest full Form 990 per 501(c)(3) (mostly tax years 2023–24): government grants (Part VIII line 1e) / total revenue; months of cash = (cash + savings, Part X lines 1–2) / (total expenses / 12). "
                    "By 3-character NTEE code, 400+ charities each."),
@@ -1578,16 +1703,18 @@ def stress_cash(ctx):
     # hospitals and housing hold reserves in investments and buildings, not cash: shown, but not headlined
     cand = [r for r in rows if not r["code"].startswith(("E2", "L2"))]
     top, second, bot = cand[0], cand[1], rows[-1]
+    months = allr["m"]
     v = q1(f"""SELECT avg((cash * 12.0 / cy_expenses < 3)::int) AS s FROM (SELECT DISTINCT ON (ein) * FROM filing_flag WHERE form = '990' ORDER BY ein, tax_year DESC, object_id DESC) x
                WHERE cy_revenue > 0 AND cy_expenses > 0 AND cash IS NOT NULL AND ein IN (SELECT ein FROM orgs WHERE subsection = '03' AND left(ntee_cd, 3) = '{top['code']}')""")
     chart = hbar(rows[:15] + rows[-3:], "cause", "under_3_months_cash", "Share with under 3 months of cash", rule=float(allr["s"]),
                  tooltip_extra=[("median_months", "quantitative", ".1f"), ("charities", "quantitative", ",")])
     return {
         "stats": stats(("Under 3 months of cash", pct(top['under_3_months_cash'])), ("Typical charity, months of cash", f"{allr['m']:.1f}")),
-        "headline": (f"{pct(top['under_3_months_cash'])} of {label(top['code']).lower()} hold under three months of cash, among the thinnest reserves of any sub-cause; "
-                     f"the typical charity holds {allr['m']:.1f} months"),
-        "summary": (f"{label(second['code'])} ({pct(second['under_3_months_cash'])}) and other direct-service fields run close to empty, while {label(bot['code']).lower()} sit on the most. "
-                    "Thin cash plus a payroll-heavy budget is the classic setup for a sudden closure; multi-year or reserve-building gifts help most here."),
+        "headline": f"{cap(frac(top['under_3_months_cash']))} of {label(top['code']).lower()} hold under three months of cash",
+        "summary": f"{pct(top['under_3_months_cash'])} of {label(top['code']).lower()} hold under three months of cash, among the thinnest reserves of any sub-cause.",
+        "points": [f"{bold(pct(top['under_3_months_cash']))} of {label(top['code']).lower()}, {bold(pct(second['under_3_months_cash']))} of {label(second['code']).lower()}",
+                   f"The typical charity holds {bold(f'{months:.1f} months')} of cash",
+                   WHY + "multi-year or reserve-building gifts help most here"],
         "chart": chart,
         "method": ("Newest full Form 990 per 501(c)(3): cash + savings (Part X lines 1–2, end of year) divided by monthly total expenses. By 3-character NTEE code with 400+ charities; "
                    "chart: 15 thinnest and 3 thickest; dashed line = all charities. Headline skips hospitals (E2x) and housing (L2x), which hold reserves as investments and buildings."),
@@ -1624,9 +1751,11 @@ def stress_gov_map(ctx):
                       scale={"scheme": "reds"}, tooltip_extra=[("charities", "quantitative", "Charities", ",")])
     return {
         "stats": stats((f"{hi['name']}, half from government", pct(hi['gov_majority'])), (f"{lo['name']}, half from government", pct(lo['gov_majority']))),
-        "headline": f"In {hi['name']}, {pct(hi['gov_majority'])} of charities get half or more of their revenue from government grants; in {lo['name']}, {pct(lo['gov_majority'])}",
-        "summary": ("States where charities lean on public grants face the sharpest local fallout from federal cuts and payment delays. "
-                    "Private donors there are the backstop; a map like this helps target emergency or bridge funding."),
+        "headline": f"{hi['name']} charities lean hardest on government grants",
+        "summary": f"In {hi['name']}, {pct(hi['gov_majority'])} of charities get half or more of their revenue from government grants, versus {pct(lo['gov_majority'])} in {lo['name']}.",
+        "points": [f"{bold(pct(hi['gov_majority']))} of {hi['name']} charities get half their revenue from government grants",
+                   f"{bold(pct(lo['gov_majority']))} in {lo['name']}, the lowest",
+                   WHY + "private donors are the backstop when federal grants stall"],
         "chart": chart,
         "method": "Newest full Form 990 per 501(c)(3) with usable revenue, expenses and cash: government grants (Part VIII line 1e) / total revenue ≥ 50%, by the charity's state.",
         "caveats": "Medicaid and other fee-for-service payments are program revenue, not grants. Statewide charities headquartered in a capital city count in that state only.",
@@ -1660,9 +1789,11 @@ def stress_size(ctx):
     small, big = rows[0], rows[-1]
     return {
         "stats": stats(("Ran a deficit", pct(allr['d'])), ("Under $500K, under 3 months of cash", pct(small['under_3_months_cash'])), ("$100M+ with a deficit", pct(big['deficit']))),
-        "headline": f"{pct(allr['d'])} of US charities filing a full 990 spent more than they took in during their latest year; {pct(small['under_3_months_cash'])} of those under $500K hold under three months of cash",
-        "summary": (f"Deficits are common at every size ({pct(small['deficit'])} of small, {pct(big['deficit'])} of $100M+), so one deficit year isn't a warning sign by itself; "
-                    "two in a row with thin cash is. Small charities' thin cash makes them the most sensitive to a lost grant."),
+        "headline": f"{pct(allr['d'])} of charities spent more than they took in last year",
+        "summary": f"{pct(allr['d'])} of US charities filing a full 990 spent more than they took in during their latest year.",
+        "points": [f"{bold(pct(small['deficit']))} of charities under $500K ran a deficit, {bold(pct(big['deficit']))} of $100M+ ones",
+                   f"{bold(pct(small['under_3_months_cash']))} of those under $500K hold under three months of cash",
+                   WHY + "two deficits in a row with thin cash is the warning sign"],
         "chart": chart,
         "method": "Newest full Form 990 per 501(c)(3) (mostly tax years 2023–24): deficit = total expenses > total revenue (Part I lines 18–12); cash = Part X lines 1–2; liabilities and assets from Part X.",
         "caveats": "Deficits include non-cash depreciation and planned spending of prior-year restricted gifts. 990-EZ filers (under $200K) aren't included.",
@@ -1689,6 +1820,7 @@ def stress_single(ctx):
     for r in rows:
         r["cause"] = MAJOR[r["major"]]
     top, bot = rows[0], rows[-1]
+    bot_med = bot["median_funders"]
     v = q1(f"""SELECT avg((x.n = 1)::int) AS s, count(*) AS c FROM (
                  SELECT g.recipient_ein, count(DISTINCT g.funder_ein) AS n FROM grants g
                  WHERE g.tax_year IN (2022, 2023, 2024) AND g.amount > 0 AND g.recipient_ein IN (
@@ -1699,10 +1831,12 @@ def stress_single(ctx):
                  highlight=("major", top["major"]), tooltip_extra=[("funded_charities", "quantitative", ","), ("median_funders", "quantitative", ",")])
     return {
         "stats": stats((f"{top['cause']}, one funder", pct(top['one_funder_share'])), (f"{bot['cause']}, one funder", pct(bot['one_funder_share']))),
-        "headline": f"{pct(top['one_funder_share'])} of mid-size {top['cause'].lower()} charities with foundation support rely on a single foundation, versus {pct(bot['one_funder_share'])} in {bot['cause'].lower()}",
-        "summary": ("One-funder charities lose all foundation support when that funder changes course. "
-                    f"{bot['cause']} and {rows[-2]['cause'].lower()} groups have a median of {bot['median_funders']:.0f} and {rows[-2]['median_funders']:.0f} foundation backers; "
-                    f"{top['cause'].lower()} groups have {top['median_funders']:.0f}, often a local family or company foundation."),
+        "headline": f"{cap(frac(top['one_funder_share']))} of {top['cause'].lower()} charities rely on one foundation",
+        "summary": (f"{pct(top['one_funder_share'])} of mid-size {top['cause'].lower()} charities with foundation support rely on a single foundation, "
+                    f"versus {pct(bot['one_funder_share'])} in {bot['cause'].lower()}."),
+        "points": [f"{bold(pct(top['one_funder_share']))} of mid-size {top['cause'].lower()} charities have one foundation funder",
+                   f"{bold(pct(bot['one_funder_share']))} in {bot['cause'].lower()}, with a median of {bold(f'{bot_med:.0f}')} backers",
+                   WHY + "if that one funder changes course, all foundation support goes"],
         "chart": chart,
         "method": ("Public charities filing a full 990 with $250K–$5M revenue that received at least one linked 990-PF grant in tax years 2022–24; count of distinct foundations paying them, "
                    "by NTEE major group (500+ charities)."),
@@ -1736,14 +1870,17 @@ def stress_insolvent(ctx):
                   WHERE {F990_OK} AND f.total_assets > 0 AND o.subsection = '03' AND o.ntee_cd ~ '^[A-Z][0-9]{{2}}'""")
     v = q1(f"""SELECT avg((total_liabilities > total_assets)::int) AS s FROM (SELECT DISTINCT ON (ein) * FROM filing_flag WHERE form = '990' ORDER BY ein, tax_year DESC, object_id DESC) x
                WHERE cy_revenue > 0 AND cy_expenses > 0 AND cash IS NOT NULL AND total_assets > 0 AND ein IN (SELECT ein FROM orgs WHERE subsection = '03' AND left(ntee_cd, 3) = '{top['code']}')""")
-    nonhousing = next(r for r in rows if not r["code"].startswith("L"))
+    nonhousing = next(r for r in rows if not r["code"].startswith("L") and "housing" not in label(r["code"]).lower())
     chart = hbar(rows[:15], "cause", "liabilities_exceed_assets", "Share whose liabilities exceed assets", rule=float(allr["s"]),
                  tooltip_extra=[("charities", "quantitative", ","), ("deficit", "quantitative", ".0%")])
     return {
         "stats": stats(("Owe more than they own", pct(top['liabilities_exceed_assets'])), ("All charities", pct(allr['s'])), ("Ratio", f"{top['liabilities_exceed_assets'] / allr['s']:.0f}x")),
-        "headline": f"{pct(top['liabilities_exceed_assets'])} of {label(top['code']).lower()} owe more than they own, {top['liabilities_exceed_assets'] / allr['s']:.0f} times the {pct(allr['s'])} rate for all charities",
-        "summary": (f"Debt-financed housing dominates the list, which is expected for mortgage-backed properties. Outside housing, {label(nonhousing['code']).lower()} lead at {pct(nonhousing['liabilities_exceed_assets'])}. "
-                    "Negative net assets limit borrowing and can trigger covenant problems, so check the balance sheet, not just the income statement."),
+        "headline": f"{cap(label(top['code']).lower())} most often owe more than they own",
+        "summary": (f"{pct(top['liabilities_exceed_assets'])} of {label(top['code']).lower()} owe more than they own, "
+                    f"{top['liabilities_exceed_assets'] / allr['s']:.0f} times the {pct(allr['s'])} rate for all charities."),
+        "points": [f"{bold(pct(top['liabilities_exceed_assets']))} owe more than they own, versus {bold(pct(allr['s']))} of all charities",
+                   f"Outside housing, {label(nonhousing['code']).lower()} lead at {bold(pct(nonhousing['liabilities_exceed_assets']))}",
+                   WHY + "it limits borrowing, so check the balance sheet, not just income"],
         "chart": chart,
         "method": "Newest full Form 990 per 501(c)(3) with assets: total liabilities > total assets at end of year (Part X lines 26 and 16). 3-character NTEE codes with 400+ charities; chart: top 15, dashed line = all.",
         "caveats": "Book values: buildings are carried at depreciated cost, so property-rich organizations can look insolvent while holding valuable real estate.",
@@ -1758,7 +1895,7 @@ def stress_insolvent(ctx):
 
 # ---------------------------------------------------------------- write
 COLS = ["slug", "section", "headline", "summary", "chart", "method", "caveats", "sources", "query", "data", "org_eins",
-        "explore_query", "cause", "state", "score", "verified", "stats"]
+        "explore_query", "cause", "state", "score", "verified", "stats", "points"]
 
 
 def upsert(rec):
@@ -1819,6 +1956,8 @@ def main():
         for name, ok in checks:
             if not ok:
                 print(f"     check failed: {name}")
+        for w in lint(rec):
+            print(f"     text: {w}")
         if not a.dry:
             upsert(rec)
     if a.json:
