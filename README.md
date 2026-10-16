@@ -363,7 +363,7 @@ Set `DATABASE_URL` to target another database (e.g. Supabase after migration). D
 | `grant_unlinked` | Grading | Links removed after grading: grant, old EIN, method, reason |
 | `giving_circles` (view) | IRS master file + SOI | Giving circles that are their own nonprofit, found by name: Impact 100, 100 Who Care, women's funds (only those paying $10K+ in grants), "giving circle"; grants paid (990 Part IX line 1), website. 145 in 38 states. Hosted circles don't file, so they're missing |
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
-| `insights` | `etl/mine_insights.py` | Verified patterns for NomBot's Insights tab: headline, summary, Vega-Lite chart (data inline), method, caveats, sources, the SQL that reproduces it, CSV rows, org EINs, score, `verified` |
+| `insights` | `etl/mine_insights.py` | Verified patterns for NomBot's Insights tab: headline, summary, Vega-Lite chart (data inline), method, caveats, sources, the SQL that reproduces it, CSV rows, org EINs, score, `verified`, `stats` (key numbers for the finding page, migration 029) |
 
 ## Status
 - [x] Schema + migration runner
@@ -398,6 +398,7 @@ Precomputed, verified patterns for NomBot's **Insights** tab (audience: philanth
 | **financial-stress** | 6 | government-dependent + thin cash, thin cash by cause, deficits, single funder, negative net assets |
 
 - **One insight = one function:** SQL (stored in `query`), an independent recount, a Vega-Lite v5 chart, text built from the numbers. No figure is hard-coded.
+- **Key numbers:** `stats` (migration 029) holds 2–4 `{label, value}` tiles per insight, preformatted from the same numbers as the headline (`stats(...)` in each function). NomBot's `/research/<slug>` shows them and hides the tiles when null. All 32 filled (Oct 16).
 - **Verified:** `verified = true` only if the recount agrees and samples are large enough. Weak findings are dropped from the code, not stored.
 - **Shared rules:** grant years 2022–24; no individuals, placeholders, foreign or private-foundation recipients in dollar totals; live grant link rate in `caveats`.
 - **Refresh** (nightly, after `db/refresh.sql`): `python3 etl/mine_insights.py` (~6 min). Updates rows by slug, moves `refreshed_at`, deletes retired slugs. `--dry` prints only, `--only slug,slug` runs some.
@@ -430,6 +431,7 @@ Precomputed, verified patterns for NomBot's **Insights** tab (audience: philanth
 - `grants.recipient_kind` (migration 023) marks grants that can never link: foreign 81,628, placeholder 13,998, individual 2,346 (few, but $110B). Health report shows linked of all and of linkable.
 - Migration 024 moves the rules into `recipient_kind_of(name, state)` (re-applied by `load_grants.py` after every match) and adds HIPAA notes, "N recipients/students", "ATCH 4", "vials of … distributed": +2,721 grants flagged ($10.8B), 97% right on 120 graded. Placeholder 16,577, individual 2,488.
 - Hand links (Oct 15): 9 donor-advised fund sponsors under any state name (Fidelity, Schwab, Vanguard, NPT, GS, NCF, BofA, Raymond James, T. Rowe Price; 499 name variants, 99% graded) and 47 top unmatched names (graded 47/51, rejects dropped) in `grant_match_overrides`; 39 public universities in `public_entity_aliases` (migration 026, applied by `load_public_entities.py --match`, which now upserts instead of truncating). Dollars linked 55.1% → 57.4%.
+- Migration 029: `insights.stats` jsonb, key numbers for NomBot's research finding pages.
 - Migration 028: `flag_latest` and `financials_latest` break same-year ties by newest filing (`object_id`), then full 990 over EZ; before, 5,611 orgs with 2+ returns in a year got a random pick per refresh.
 - Unmatched grants by reason (Oct 14): 47% of unmatched dollars are US organizations not matched; 32% placeholders ("see statement", HIPAA notes), 10% foreign, 8% individuals (patient programs), 3% government or churches.
 - Unmatched linkable grants by size (Oct 15, after the exact fix): **$1M+ 7,303 grants, $34.5B** (52% of unmatched dollars); $100K–1M 78,134, $17.5B; $10K–100K 458,961, $11.9B; under $10K 1.32M, $2.8B. Top 100 names hold $21B: unflagged placeholders ("ATCH 4", HIPAA notes, "vials of … distributed": 31 grants, $5.2B), donor-advised fund sponsors filed under another state (Fidelity, Schwab, Goldman Sachs: 4,109 grants, $4.9B) and big universities/hospitals under public names (UCSF Foundation, Mass General, University of Michigan).
