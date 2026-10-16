@@ -119,6 +119,8 @@ erDiagram
 | `grants` | Each grant: recipient, ZIP, amount, purpose |
 | `zip_regions` | ZIP → county, Appalachia |
 | `county_need` | Poverty, income, population |
+| `api_keys` | NomBot partner API keys: name, prefix, sha256 hash, scopes, rate, revoked (031) |
+| `api_usage` | API calls per key, day, route and status (031) |
 
 ### Vector search
 
@@ -337,6 +339,52 @@ No Python packages needed (stdlib + `psql`), except the optional GPU embedder (`
 Claude Code reads the database through a read-only login: `nombot_reader` (read-only transactions, 60 s timeout) behind the `nombot-db` MCP server (`claude mcp add nombot-db -s user -- npx -y @modelcontextprotocol/server-postgres postgresql://nombot_reader@localhost/nombot`). Embeddings run in Node because they share code with the NomBot app's query embedder.
 
 Set `DATABASE_URL` to target another database (e.g. Supabase after migration). Defaults to `postgresql:///nombot`.
+
+## Snapshots for analysts
+
+Weekly Parquet copy of the analyst tables, so teammates query it without access to this Mac. `etl/export_snapshot.py` (DuckDB `postgres` extension, read-only attach, streams each table to Parquet).
+
+```bash
+.venv-analytics/bin/python etl/export_snapshot.py --zip --keep 3          # ~/Exports/nombot-YYYY-MM-DD/ (+ .zip), newest 3 kept
+.venv-analytics/bin/python etl/export_snapshot.py --drive                 # also copy to My Drive/IoG Data Snapshots/ (Google Drive for Desktop)
+```
+
+- **Files:** `orgs`, `filing_latest` (no vectors), `financials_latest`, `flag_latest`, `funders`, `grants`, `board_interlocks` (high + medium only), `public_entities`, `county_need`, `zip_regions`, `insights` (JSON as strings), `giving_circles`. Plus a `README.md` (rows, columns, caveats, DuckDB / pandas / polars examples) and `manifest.json` (rows, bytes, sha256, db size, git commit).
+- **Left out:** raw and scratch tables, embeddings, `board_members`, `grant_unlinked`, `grant_match_overrides`, api tables, `feedback`.
+- **Oct 16 run:** 12 files, 378 MB (grants 147 MB, filing_latest 112 MB, orgs 86 MB), 23 s; every file's row count matches Postgres.
+- **Check:** the run exits non-zero if any Parquet row count differs from Postgres. Writes to `.partial` and renames at the end.
+- **Teammates:** open the shared Drive folder, then `duckdb -c "select … from 'grants.parquet'"` inside the snapshot folder. `board_interlocks.people` lists board members by name: internal only.
+- **Schedule (not installed):** Sundays 3:30 AM, after the 2:30 AM backup. `etl/install_export_schedule.sh` writes and loads it (`--print` to view, `--uninstall`). Log: `~/Library/Logs/iog/export-snapshot.log`.
+
+<details><summary>launchd plist (<code>~/Library/LaunchAgents/org.iog.export-snapshot.plist</code>)</summary>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>org.iog.export-snapshot</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/hunterzhang/Desktop/generosity-data/.venv-analytics/bin/python</string>
+    <string>/Users/hunterzhang/Desktop/generosity-data/etl/export_snapshot.py</string>
+    <string>--zip</string>
+    <string>--keep</string><string>3</string>
+    <string>--drive</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/hunterzhang/Desktop/generosity-data</string>
+  <key>StartCalendarInterval</key><dict>
+    <key>Weekday</key><integer>0</integer>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/hunterzhang/Library/Logs/iog/export-snapshot.log</string>
+  <key>StandardErrorPath</key><string>/Users/hunterzhang/Library/Logs/iog/export-snapshot.log</string>
+</dict></plist>
+```
+
+</details>
 
 ## Tables
 
