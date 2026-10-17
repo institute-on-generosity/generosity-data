@@ -218,6 +218,19 @@ TABLES = {
             "created_at / refreshed_at": "Timestamps",
         },
     ),
+    "org_labels": (
+        "org_labels",
+        "ein, label, tier, evidence",
+        None,
+        "Graded cause labels no NTEE code captures (climate, women_girls), one row per org and label. "
+        "Methods: generosity-data docs/labels/<label>.md.",
+        {
+            "ein": "9-digit EIN; joins orgs",
+            "label": "Label slug: climate or women_girls",
+            "tier": "primary (the cause is the org's main stated work) or partial (one named goal or program among broader work)",
+            "evidence": "Up to 25 words: why, quoted or paraphrased from the name and Form 990 text",
+        },
+    ),
     "giving_circles": (
         "giving_circles",
         "*",

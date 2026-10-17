@@ -358,7 +358,7 @@ Weekly Parquet copy of the analyst tables, so teammates query it without access 
 .venv-analytics/bin/python etl/export_snapshot.py --drive                 # also copy to My Drive/IoG Data Snapshots/ (Google Drive for Desktop)
 ```
 
-- **Files:** `orgs`, `filing_latest` (no vectors), `financials_latest`, `flag_latest`, `funders`, `grants`, `board_interlocks` (high + medium only), `public_entities`, `county_need`, `zip_regions`, `insights` (JSON as strings), `giving_circles`. Plus a `README.md` (rows, columns, caveats, DuckDB / pandas / polars examples) and `manifest.json` (rows, bytes, sha256, db size, git commit).
+- **Files:** `orgs`, `filing_latest` (no vectors), `financials_latest`, `flag_latest`, `funders`, `grants`, `board_interlocks` (high + medium only), `public_entities`, `county_need`, `zip_regions`, `insights` (JSON as strings), `giving_circles`, `org_labels` (ein, label, tier, evidence: climate and women_girls). Plus a `README.md` (rows, columns, caveats, DuckDB / pandas / polars examples) and `manifest.json` (rows, bytes, sha256, db size, git commit).
 - **Left out:** raw and scratch tables, embeddings, `board_members`, `grant_unlinked`, `grant_match_overrides`, api tables, `feedback`.
 - **Oct 16 run:** 12 files, 378 MB (grants 147 MB, filing_latest 112 MB, orgs 86 MB), 23 s; every file's row count matches Postgres.
 - **Check:** the run exits non-zero if any Parquet row count differs from Postgres. Writes to `.partial` and renames at the end.
