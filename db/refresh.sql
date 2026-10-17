@@ -12,3 +12,7 @@ REFRESH MATERIALIZED VIEW flag_latest;
 REFRESH MATERIALIZED VIEW funder_purposes;
 -- After grants are relinked: board links marked funder-grantee need grants.recipient_ein (migration 018)
 REFRESH MATERIALIZED VIEW board_interlocks;
+-- Research answers (migration 033): after grants are relinked or 990 filings load
+REFRESH MATERIALIZED VIEW grant_clean;
+REFRESH MATERIALIZED VIEW grant_totals;
+REFRESH MATERIALIZED VIEW flag_year;

@@ -414,6 +414,8 @@ Weekly Parquet copy of the analyst tables, so teammates query it without access 
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
 | `cause_labels` | `etl/label_causes.py` | Cause labels no NTEE code captures (migration 032): `label` (climate, women_girls), name, definition, includes, excludes, `mixed_rule` (primary vs partial), `version`, `grading` (latest fresh-sample grade: precision per tier and source, recall estimate, top-100 dollar check). Method per label: [`docs/labels/`](docs/labels/) |
 | `org_labels` | `etl/label_causes.py` | One row per (org, label) in the label: `tier` primary / partial, `score` (classifier confidence), `method` (`llm:<model>` or `review:<model>` for the hand-checked top recipients), `evidence` (≤ 25 words), `version`. Climate 2,729 orgs, women and girls 44,117 |
+| `grant_clean`, `grant_totals`, `flag_year` (materialized views) | `grants`, `filing_flag`, `orgs`, `funders`, `zip_regions` | Migration 033, for NomBot research answers (`lib/answer.ts`): `grant_clean` = 990-PF grants 2022–2025 to US orgs with the miner's exclusions (no individuals, placeholders, foreign or private-foundation recipients; unlinked kept), plus recipient NTEE, county, funder state and a `gos` flag (purpose reads general / unrestricted / operating). 4,930,887 rows, 598 MB. `grant_totals` = its sums per tax year and recipient state (all, linked, general support; 224 rows). `flag_year` = one 990/990-EZ per org per tax year (newest filing) with revenue, expenses, contributions, government grants (line 1e), cash, state, NTEE, county (777,193 rows). Refreshed by `db/refresh.sql` |
+| `research_questions` | NomBot `/research/ask` | Migration 035: each distinct research question answered in NomBot (question, normalized text unique, router spec, answer headline, status, times asked, first and last asked). No personal data. Feeds Research's Asked questions list |
 | `label_candidates` | `etl/label_causes.py` | Work table: every candidate org per label with its `sources` (ntee, kw_name, kw_text, emb_query, emb_seed) and similarity to the label query and seed centroid. Climate 21,611, women and girls 70,942 |
 | `insights` | `etl/mine_insights.py` | Verified patterns for NomBot's Insights tab: headline, summary, Vega-Lite chart (data inline), method, caveats, sources, the SQL that reproduces it, CSV rows, org EINs, score, `verified`, `stats` (key numbers for the finding page, migration 029) |
 
@@ -435,6 +437,7 @@ Weekly Parquet copy of the analyst tables, so teammates query it without access 
 - [x] **IRS 2026 batches (Oct 14)**: 785,772 filings for 541,879 orgs (452,462 websites); 138,734 foundations, 5,348,919 grants over 4 IRS years (tax years mostly 2022–2025, $392B); 56% linked (85,127 foundations fund a linked org; 49% of linked grants stay in the funder's state)
 - [x] **Board interlocks (migrations 018, 027, `etl/load_board.py`)**: 4,859,408 board seats at 679,042 orgs; 511,243 same-state org pairs sharing a board member: 420,614 hidden links (44,816 high confidence), the rest sister orgs or bank trusts; 14,457 pairs where a foundation pays an org it shares board members with (10,042 hidden)
 - [x] **Insights (migration 025, `etl/mine_insights.py`)**: 34 verified patterns in 6 sections for NomBot's Insights tab, refreshed by one command
+- [x] **Research-answer views (migration 033, Oct 16)**: `grant_clean`, `grant_totals`, `flag_year` so NomBot answers aggregate questions in 0.1–1.3 s; totals match the label report ($171.6B linked 2022–24, climate $4.23B any tier)
 - [x] **Cause labels (migration 032, `etl/label_causes.py`, Oct 16)**: climate (1,305 primary, 1,424 partial) and women and girls (13,602 primary, 30,515 partial), graded on fresh samples; 2 insights
 
 ## Insights
@@ -502,7 +505,7 @@ Denominator: **$171.6B** of linked grant dollars (no individuals, placeholders, 
 - **For comparison:** ClimateWorks puts mitigation at ~2% of global giving (2024 data); WPI puts women and girls at ~2% of all US giving (2022–23, mostly individual gifts). Neither is the same measure.
 - **Limits:** labels describe the recipient, not the grant's purpose; foundation grants only (individual and corporate giving outside foundations isn't visible; tax data covers itemizers only); 56% of grant dollars link to a recipient; 87% of linked dollars go to orgs with 990 mission text, the rest are judged by name.
 - **Cost:** $22.81 of Claude API for both labels, iterations included (Haiku $12.56, Opus judge $6.80, Sonnet $3.44).
-- **UI next:** NomBot filter and Research Buddy tool (not built yet).
+- **UI:** NomBot research answers (Oct 16) use both labels for "how much / what share / top funders" questions, in the answer card, Research Buddy's `research_answer` tool, `GET /api/v1/answer` and MCP (views from migration 033). A NomBot search filter by label isn't built yet.
 
 ## Gotchas
 - 990 XML batches use **Deflate64**: Python's `zipfile` can't read them; `unzip` can.
