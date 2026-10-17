@@ -332,9 +332,10 @@ python3 etl/load_gdelt.py --days=30    # GDELT news on philanthropy + nonprofits
 CONGRESS_API_KEY=... python3 etl/load_congress.py   # current Congress bills (free key: api.congress.gov/sign-up; resumes if cut off)
 python3 etl/load_search_index.py  # optional: all orgs into a local OpenSearch for NomBot's `npm run bench -- --bm25` (~2 min; brew install opensearch)
 psql nombot -f db/refresh.sql      # rebuild the newest-record views, vector index, interlocks after any load (~5 min)
+(cd etl/labels && npm install) && python3 etl/label_causes.py --label climate all   # cause labels (also women_girls); Claude Batch API, ~1 h, see "Cause labels"
 ```
 
-No Python packages needed (stdlib + `psql`), except the optional GPU embedder (`.venv`: torch, sentence-transformers) and the analytics tools (`.venv-analytics`: Splink, igraph, BERTopic, DuckDB, dbt).
+No Python packages needed (stdlib + `psql`; cause labels call Claude from Node in `etl/labels/`), except the optional GPU embedder (`.venv`: torch, sentence-transformers) and the analytics tools (`.venv-analytics`: Splink, igraph, BERTopic, DuckDB, dbt).
 
 Claude Code reads the database through a read-only login: `nombot_reader` (read-only transactions, 60 s timeout) behind the `nombot-db` MCP server (`claude mcp add nombot-db -s user -- npx -y @modelcontextprotocol/server-postgres postgresql://nombot_reader@localhost/nombot`). Embeddings run in Node because they share code with the NomBot app's query embedder.
 
@@ -411,6 +412,9 @@ Weekly Parquet copy of the analyst tables, so teammates query it without access 
 | `grant_unlinked` | Grading | Links removed after grading: grant, old EIN, method, reason |
 | `giving_circles` (view) | IRS master file + SOI | Giving circles that are their own nonprofit, found by name: Impact 100, 100 Who Care, women's funds (only those paying $10K+ in grants), "giving circle"; grants paid (990 Part IX line 1), website. 145 in 38 states. Hosted circles don't file, so they're missing |
 | `feedback` | NomBot users | 👍/👎 per (question, org) from the results page; human labels for NomBot's search eval |
+| `cause_labels` | `etl/label_causes.py` | Cause labels no NTEE code captures (migration 032): `label` (climate, women_girls), name, definition, includes, excludes, `mixed_rule` (primary vs partial), `version`, `grading` (latest fresh-sample grade: precision per tier and source, recall estimate, top-100 dollar check). Method per label: [`docs/labels/`](docs/labels/) |
+| `org_labels` | `etl/label_causes.py` | One row per (org, label) in the label: `tier` primary / partial, `score` (classifier confidence), `method` (`llm:<model>` or `review:<model>` for the hand-checked top recipients), `evidence` (≤ 25 words), `version`. Climate 2,729 orgs, women and girls 44,117 |
+| `label_candidates` | `etl/label_causes.py` | Work table: every candidate org per label with its `sources` (ntee, kw_name, kw_text, emb_query, emb_seed) and similarity to the label query and seed centroid. Climate 21,611, women and girls 70,942 |
 | `insights` | `etl/mine_insights.py` | Verified patterns for NomBot's Insights tab: headline, summary, Vega-Lite chart (data inline), method, caveats, sources, the SQL that reproduces it, CSV rows, org EINs, score, `verified`, `stats` (key numbers for the finding page, migration 029) |
 
 ## Status
@@ -430,7 +434,8 @@ Weekly Parquet copy of the analyst tables, so teammates query it without access 
 - [x] Newest-record views + vector index on them (migration 015, `db/refresh.sql`); `btree_gin` for state-scoped fuzzy matching (016); funder × purpose sums for grant types (017)
 - [x] **IRS 2026 batches (Oct 14)**: 785,772 filings for 541,879 orgs (452,462 websites); 138,734 foundations, 5,348,919 grants over 4 IRS years (tax years mostly 2022–2025, $392B); 56% linked (85,127 foundations fund a linked org; 49% of linked grants stay in the funder's state)
 - [x] **Board interlocks (migrations 018, 027, `etl/load_board.py`)**: 4,859,408 board seats at 679,042 orgs; 511,243 same-state org pairs sharing a board member: 420,614 hidden links (44,816 high confidence), the rest sister orgs or bank trusts; 14,457 pairs where a foundation pays an org it shares board members with (10,042 hidden)
-- [x] **Insights (migration 025, `etl/mine_insights.py`)**: 32 verified patterns in 6 sections for NomBot's Insights tab, refreshed by one command
+- [x] **Insights (migration 025, `etl/mine_insights.py`)**: 34 verified patterns in 6 sections for NomBot's Insights tab, refreshed by one command
+- [x] **Cause labels (migration 032, `etl/label_causes.py`, Oct 16)**: climate (1,305 primary, 1,424 partial) and women and girls (13,602 primary, 30,515 partial), graded on fresh samples; 2 insights
 
 ## Insights
 
@@ -440,18 +445,64 @@ Precomputed, verified patterns for NomBot's **Insights** tab (audience: philanth
 |---|---|---|
 | **funding-gaps** | 5 | child care reach, state and county $ per resident, poverty fifths, Appalachia |
 | **rising-fading** | 5 | new charities by year and cause, disaster charities, cause $ trends, grants to grantmakers |
-| **money-flows** | 5 | pharma patient assistance, foundation-to-foundation, out-of-state reliance, concentration, net exporters |
+| **money-flows** | 7 | pharma patient assistance, foundation-to-foundation, out-of-state reliance, concentration, net exporters, climate share, women and girls share (cause labels) |
 | **track-record** | 6 | invite-only, general support, payout, one-grantee foundations, audits, renewal |
 | **affiliations** | 5 | board-linked giving (high confidence only), by cause, insider deals, family ties, network density |
 | **financial-stress** | 6 | government-dependent + thin cash, thin cash by cause, deficits, single funder, negative net assets |
 
 - **One insight = one function:** SQL (stored in `query`), an independent recount, a Vega-Lite v5 chart, text built from the numbers. No figure is hard-coded.
-- **Key numbers:** `stats` (migration 029) holds 2–4 `{label, value}` tiles per insight, preformatted from the same numbers as the headline (`stats(...)` in each function). NomBot's `/research/<slug>` shows them and hides the tiles when null. All 32 filled (Oct 16).
+- **Key numbers:** `stats` (migration 029) holds 2–4 `{label, value}` tiles per insight, preformatted from the same numbers as the headline (`stats(...)` in each function). NomBot's `/research/<slug>` shows them and hides the tiles when null. All 34 filled (Oct 16).
 - **Text:** `headline` is a short claim (≤ ~12 words, one number at most). `points` (migration 030) holds 2–3 bullets (≤ ~15 words, key numbers in `**bold**`, the last one starts "**Why it matters:**"); NomBot shows them on cards and finding pages. `summary` is a one-sentence fallback (≤ 25 words). No semicolons or em dashes; `lint()` prints a `text:` warning when a row breaks a rule.
 - **Verified:** `verified = true` only if the recount agrees and samples are large enough. Weak findings are dropped from the code, not stored.
 - **Shared rules:** grant years 2022–24; no individuals, placeholders, foreign or private-foundation recipients in dollar totals; live grant link rate in `caveats`.
 - **Refresh** (nightly, after `db/refresh.sql`): `python3 etl/mine_insights.py` (~6 min). Updates rows by slug, moves `refreshed_at`, deletes retired slugs. `--dry` prints only, `--only slug,slug` runs some.
 - **NTEE labels:** `etl/ntee_codes.csv` (NCCS definitions).
+- Map color scales (`state_map`, `county_map`) stop at the 95th percentile when the top value is over 1.5× it (DC once washed out every state); the legend marks the top as "≥ $X" and tooltips keep true values.
+
+## Cause labels
+
+**Question:** how much US foundation money goes to causes no IRS/NTEE code marks? First two labels, asked by Una Osili (WPI): **climate** and **women and girls**. Tables `cause_labels`, `org_labels`, `label_candidates` (migration 032). Method, definitions, mixed cases and prior art (WPI Women & Girls Index, ClimateWorks, Candid, OECD Rio markers): [`docs/labels/climate.md`](docs/labels/climate.md), [`docs/labels/women_girls.md`](docs/labels/women_girls.md).
+
+**Tiers:** **primary** = the cause is the main stated purpose. **partial** = one explicit goal or program among others (Boys & Girls Clubs; a land trust naming climate resilience). Dollar answers give both: primary is a floor, primary + partial an upper bound.
+
+### Pipeline (`etl/label_causes.py --label <label> all`)
+
+1. **Candidates:** NTEE codes + keyword rules on name, mission, programs + embedding similarity (nomic, 512 dims) to a label query and to seed orgs' centroid (top 6,000 each).
+2. **Classify:** Claude Haiku 5.5 (high effort, Batch API, 15 orgs a call) reads name, NTEE, mission, programs → verbatim quote, tier, confidence, evidence.
+3. **Guards:** the quote must come from the record (or the name must match the label keywords). Women and girls: primary needs confidence ≥ 0.8 (else partial), partial ≥ 0.5; co-ed programs that only say "boys and girls" are not. Climate: **Claude Sonnet 5.5 re-reads every org Haiku put in the label** and its answer decides.
+4. **Top-100 dollar review:** the 100 largest recipients per label re-graded by Claude Opus 5.5; 10 climate and 16 women-and-girls disagreements accepted after reading, stored in `etl/labels/overrides-<label>.json` (`method = review:…`).
+5. **Grade:** fresh random samples (never reused: `data/labels/<label>/graded.txt`), stratified by tier and candidate source, judged by Claude Opus 5.5 with its own prompt. Bars: **primary ≥ 95%** exact tier, **partial ≥ 90%** in the label. Recall: rejected candidates + 150 non-candidates from likely NTEE groups. `--record` stores the grade in `cause_labels.grading`.
+
+### Grades (fresh samples, judge Claude Opus 5.5)
+
+| Label (version) | Primary right | Partial in label | Missed: rejected candidates | Missed: non-candidates | Recall (est.) |
+|---|---|---|---|---|---|
+| **Climate** (.9, sample g5) | **95%** (63/66; CI 88–98%) | **95%** (63/66) | 1/60 | 0/150 | **89%** |
+| **Women and girls** (.8, sample g4) | **97%** (65/66; CI 92–100%) | **92%** (72/76, weighted by source) | 8/60 | 0/150 | **92%** |
+
+- **Iterations** (each graded on a fresh sample): v.4–.5 Haiku low effort: primary 85–86%, partial 52% (climate) and 82%. v.6 high effort + rules: 92%/83% and 81%/94%. v.7–.8 confidence thresholds: climate partial stuck at 87–89%, so v.9 added the Sonnet stage.
+- **Tier exactness for partial is lower** (climate 80%, women and girls 58%): most misses are true primaries kept at partial, so primary dollars are a floor.
+- **Top-100 recipients by dollars** (before the review): primary 100% right by dollars for both; partial 71% (climate: fiscal sponsors Windward Fund and Multiplier, WWF) and 93%.
+- **Recall** is estimated inside likely NTEE groups only (climate C, U, Q, S, W, B9, K; women and girls P, O, R, E, B, S, Q, L, X).
+
+### Answers: foundation grants 2022–24, linked to a public charity
+
+Denominator: **$171.6B** of linked grant dollars (no individuals, placeholders, foreign or private-foundation recipients). `python3 etl/label_causes.py --label <label> report`.
+
+| | Climate | Women and girls |
+|---|---|---|
+| **Primary** | **$2.28B, 1.33%** (573 orgs) | **$2.84B, 1.65%** (4,861 orgs) |
+| **Primary + partial** | $4.23B, 2.47% (1,470 orgs) | $5.91B, 3.45% (11,931 orgs) |
+| Primary share by year (2022, 2023, 2024) | 1.32%, 1.28%, 1.39% | 1.67%, 1.56%, 1.74% |
+| Top funders (primary $) | Sergey Brin Family Fdn $263M, Bloomberg Family Fdn $195M, Hewlett $187M, Waverley Street $186M | Susan Thompson Buffett Fdn $366M, Ford $72M, Gates $72M, Hewlett $52M |
+| Top recipients | Climate Imperative Fdn $377M, US Energy Fdn $293M, EDF $285M (partial), ClimateWorks $266M | Planned Parenthood Federation $231M, NAF Hotline Fund $180M, Texas Children's (partial) $87M, Boys & Girls Clubs of America (partial) $75M |
+| Top states (primary $, share of state's linked $) | CA $1.25B (5.1%), DC $288M, NY $178M | NY $643M (2.3%), DC $425M (3.7%), CA $313M |
+
+- **Insights:** `flow-climate-share`, `flow-women-girls-share` (money-flows), verified only while the stored grade meets the bars.
+- **For comparison:** ClimateWorks puts mitigation at ~2% of global giving (2024 data); WPI puts women and girls at ~2% of all US giving (2022–23, mostly individual gifts). Neither is the same measure.
+- **Limits:** labels describe the recipient, not the grant's purpose; foundation grants only (individual and corporate giving outside foundations isn't visible; tax data covers itemizers only); 56% of grant dollars link to a recipient; 87% of linked dollars go to orgs with 990 mission text, the rest are judged by name.
+- **Cost:** $22.81 of Claude API for both labels, iterations included (Haiku $12.56, Opus judge $6.80, Sonnet $3.44).
+- **UI next:** NomBot filter and Research Buddy tool (not built yet).
 
 ## Gotchas
 - 990 XML batches use **Deflate64**: Python's `zipfile` can't read them; `unzip` can.

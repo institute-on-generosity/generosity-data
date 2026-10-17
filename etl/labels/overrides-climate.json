@@ -1,0 +1,82 @@
+[
+ {
+  "ein": "473522162",
+  "name": "WINDWARD FUND",
+  "tier": "not",
+  "was": "partial",
+  "why": "Multi-issue fiscal sponsor; mission doesn't name climate.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "521693387",
+  "name": "WORLD WILDLIFE FUND INC",
+  "tier": "not",
+  "was": "partial",
+  "why": "Conservation group; low-emission energy is one item in a long list.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "912166435",
+  "name": "MULTIPLIER",
+  "tier": "not",
+  "was": "partial",
+  "why": "Multi-issue environmental fiscal sponsor; mission doesn't name climate.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "223053747",
+  "name": "CERES INC",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Programs focus on climate risk in capital markets and clean energy policy.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "010729039",
+  "name": "NORTHEAST WILDERNESS TRUST",
+  "tier": "not",
+  "was": "partial",
+  "why": "Wildland conservation; climate resilience only a land-prioritization factor.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "260535276",
+  "name": "THIRD WAY INSTITUTE",
+  "tier": "not",
+  "was": "partial",
+  "why": "Broad centrist policy institute; climate is one program, not in mission.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "262271377",
+  "name": "CHESAPEAKE CONSERVANCY INC",
+  "tier": "not",
+  "was": "partial",
+  "why": "Watershed conservation; climate resilience only a passing framing phrase.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "911839907",
+  "name": "ISLAND CONSERVATION",
+  "tier": "not",
+  "was": "partial",
+  "why": "Island restoration; climate resilience is only a framing benefit.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "954375022",
+  "name": "CALSTART INC",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Accelerates zero-emission vehicles and EV infrastructure.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "841123481",
+  "name": "WESTERN ORGANIZATION OF RESOURCE",
+  "tier": "not",
+  "was": "partial",
+  "why": "Renewable energy is one grant purpose listed among several general ones.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ }
+]

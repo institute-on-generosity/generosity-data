@@ -321,12 +321,31 @@ def scatter(values, x, y, x_title, y_title, label_field, size=None, fmt=".0%", l
     return spec
 
 
+def _robust_color(color, values, field, scale, fmt):
+    """Color scale for a choropleth that one outlier (often DC) can't wash out: when the max is far above
+    the 95th percentile, the domain stops there (clamped) and the legend's top label reads "≥ $X".
+    An explicit clamped domain gets the same "≥" label. Tooltips keep the true values."""
+    scale = dict(scale or {})
+    xs = sorted(float(v[field]) for v in values if v.get(field) is not None)
+    if "domain" not in scale and len(xs) >= 10:
+        p95 = xs[min(len(xs) - 1, int(round(0.95 * (len(xs) - 1))))]
+        if p95 > 0 and xs[-1] > 1.5 * p95:
+            lo = xs[0] if scale.get("type") != "log" else min(x for x in xs if x > 0)
+            scale.update({"domain": [lo, p95], "clamp": True})
+    if scale.get("clamp") and scale.get("domain"):
+        top = scale["domain"][-1]
+        color["legend"]["values"] = [scale["domain"][0], top]  # just the two ends, the top one marked
+        color["legend"]["labelExpr"] = f"datum.value >= {top * 0.999} ? '≥ ' + datum.label : datum.label"
+    if scale:
+        color["scale"] = scale
+    return color
+
+
 def state_map(values, field, title, fmt=".0%", scale=None, tooltip_extra=()):
     """Choropleth of US states; values need `id` (state FIPS number) and `state`."""
     feature = {"url": US10M, "format": {"type": "topojson", "feature": "states"}}
-    color = {"field": field, "type": "quantitative", "title": title, "legend": {"format": fmt, "orient": "bottom", "titleLimit": 400}}
-    if scale:
-        color["scale"] = scale
+    color = _robust_color({"field": field, "type": "quantitative", "title": title, "legend": {"format": fmt, "orient": "bottom", "titleLimit": 400}},
+                          values, field, scale, fmt)
     return {
         "$schema": VL, "width": "container", "height": 380, "projection": {"type": "albersUsa"},
         "layer": [
@@ -346,9 +365,8 @@ def county_map(values, field, title, fmt="$,.0f", scale=None, tooltip_extra=()):
     """Choropleth of US counties; values need `id` (county FIPS number). State borders drawn on top."""
     counties = {"url": US10M, "format": {"type": "topojson", "feature": "counties"}}
     states = {"url": US10M, "format": {"type": "topojson", "mesh": "states"}}
-    color = {"field": field, "type": "quantitative", "title": title, "legend": {"format": fmt, "orient": "bottom", "titleLimit": 400}}
-    if scale:
-        color["scale"] = scale
+    color = _robust_color({"field": field, "type": "quantitative", "title": title, "legend": {"format": fmt, "orient": "bottom", "titleLimit": 400}},
+                          values, field, scale, fmt)
     return {
         "$schema": VL, "width": "container", "height": 400, "projection": {"type": "albersUsa"},
         "layer": [
@@ -1160,6 +1178,129 @@ def flow_pf_transfers(ctx):
         "data": [{k: r[k] for k in ("funder_ein", "funder", "recipient_ein", "recipient", "amount")} for r in rows[:500]],
         "org_eins": list(dict.fromkeys(r["recipient_ein"] for r in rows[:60])),
         "checks": [("total recount", close(v["s"], tot, rel=0.001)), ("funder count", int(v["funders"]) == funders)],
+    }
+
+
+# ---------------------------------------------------------------- cause labels (migration 032, etl/label_causes.py)
+# Causes no NTEE code captures, labeled per organization (primary = the cause is the main purpose, partial = one
+# explicit program among others) and graded on fresh samples (cause_labels.grading). Method: docs/labels/<label>.md.
+LABEL_DOC = "https://github.com/institute-on-generosity/generosity-data/blob/main/docs/labels/{}.md"
+
+
+def label_year_sql(label):
+    return f"""WITH {CLEAN},
+g AS (SELECT c.tax_year, c.amount, l.tier FROM clean c
+      LEFT JOIN org_labels l ON l.ein = c.recipient_ein AND l.label = '{label}' WHERE c.recipient_ein IS NOT NULL)
+SELECT tax_year, round(sum(amount)) AS linked, round(sum(amount) FILTER (WHERE tier = 'primary')) AS primary_usd,
+       round(sum(amount) FILTER (WHERE tier = 'partial')) AS partial_usd
+FROM g GROUP BY 1 ORDER BY 1"""
+
+
+def label_facts(label):
+    """Shared numbers for a cause-label insight: dollars by year and tier, orgs, top funders and recipients,
+    an independent recount and the stored grade."""
+    rows = q(label_year_sql(label))
+    lab = q1(f"SELECT name, version, grading FROM cause_labels WHERE label = '{label}'")
+    t = {k: sum(r[k] or 0 for r in rows) for k in ("linked", "primary_usd", "partial_usd")}
+    base = f"""WITH {CLEAN} SELECT c.funder_ein, c.recipient_ein, c.amount, l.tier FROM clean c
+               JOIN org_labels l ON l.ein = c.recipient_ein AND l.label = '{label}'"""
+    orgs = q1(f"SELECT count(DISTINCT recipient_ein) FILTER (WHERE tier = 'primary') AS p, count(DISTINCT recipient_ein) AS a, "
+              f"count(DISTINCT funder_ein) FILTER (WHERE tier = 'primary') AS f FROM ({base}) x")
+    funders = q(f"""SELECT f.ein, f.name, round(sum(x.amount)) AS amount FROM ({base}) x JOIN funders f ON f.ein = x.funder_ein
+                    WHERE x.tier = 'primary' GROUP BY 1, 2 ORDER BY amount DESC LIMIT 10""")
+    recips = q(f"""SELECT o.ein, o.name, x.tier, round(sum(x.amount)) AS amount FROM ({base}) x JOIN orgs o ON o.ein = x.recipient_ein
+                   GROUP BY 1, 2, 3 ORDER BY amount DESC LIMIT 60""")
+    v = q1(f"""SELECT sum(g.amount) AS s FROM grants g
+               WHERE g.tax_year IN (2022, 2023, 2024) AND g.amount > 0 AND g.recipient_kind IS NULL
+                 AND EXISTS (SELECT 1 FROM org_labels l WHERE l.ein = g.recipient_ein AND l.label = '{label}' AND l.tier = 'primary')
+                 AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.ein = g.recipient_ein AND o.foundation IN ('02', '03', '04'))""")
+    gr = lab.get("grading") or {}
+    long = [{"year": str(r["tax_year"]), "tier": k, "millions": round((r[c] or 0) / 1e6, 1)} for r in rows
+            for k, c in (("Main purpose (primary)", "primary_usd"), ("One program among others (partial)", "partial_usd"))]
+    return rows, t, orgs, funders, recips, v, gr, long
+
+
+def label_grade_text(gr):
+    if not gr:
+        return "Labels not yet graded. "
+    p, a = gr["primary"], gr["partial"]
+    return (f"Labels were checked on a fresh random sample by a second, stronger model: primary {pct(p['exact_weighted'])} right "
+            f"({p['exact']['n']} graded), partial {pct(a['in_label_weighted'])} right ({a['in_label']['n']} graded); "
+            f"estimated recall {pct(gr['recall_est'])} within likely NTEE groups. ")
+
+
+def label_checks(t, v, orgs, gr, version):
+    return [("primary recount", close(v["s"], t["primary_usd"], rel=0.001)), ("100+ funded primary orgs", orgs["p"] >= 100),
+            ("graded current version", gr.get("version") == version),
+            ("precision bars (primary 95%, partial 90%)", bool(gr) and gr["primary"]["exact_weighted"] >= 0.95 and gr["partial"]["in_label_weighted"] >= 0.90)]
+
+
+LABEL_CAVEAT = (" A grant counts by its recipient's label, not its purpose: grants to partial organizations count in full in the "
+                "'with partial' total, so that total is an upper bound. Individual and corporate giving outside foundations isn't visible; "
+                "tax data covers itemizers only.")
+
+
+@insight("flow-climate-share", "money-flows", 0.9, explore="climate change and clean energy nonprofits")
+def flow_climate(ctx):
+    rows, t, orgs, funders, recips, v, gr, long = label_facts("climate")
+    lab = q1("SELECT version FROM cause_labels WHERE label = 'climate'")
+    share, both = t["primary_usd"] / t["linked"], (t["primary_usd"] + t["partial_usd"]) / t["linked"]
+    top10 = sum(f["amount"] for f in funders) / t["primary_usd"]
+    chart = vbar(long, "year", "millions", "Tax year", "Foundation grants, $ millions", fmt="$,.0f", xoffset="tier")
+    return {
+        "stats": stats(("To climate-focused groups, 2022–24", money(t["primary_usd"])), ("Share of linked foundation dollars", pct(share, 1)),
+                       ("With climate programs counted", pct(both, 1)), ("Top 10 funders' share", pct(top10))),
+        "headline": f"Climate-focused groups get {pct(share, 1)} of foundation grant dollars",
+        "summary": (f"Climate-focused nonprofits received {money(t['primary_usd'])} of 2022–24 foundation grants, {pct(share, 1)} of linked dollars, "
+                    f"or {pct(both, 1)} counting groups with a climate program."),
+        "points": [f"{bold(money(t['primary_usd']))} in 2022–24 to {bold(n(orgs['p']))} climate-focused groups, {bold(pct(share, 1))} of linked dollars",
+                   f"{bold(pct(both, 1))} counting groups with a climate program. The top 10 funders gave {bold(pct(top10))}",
+                   WHY + "no IRS code marks climate, so 990 data could not count it before"],
+        "chart": chart,
+        "method": ("990-PF grants for tax years 2022–24 linked to a public charity, by the recipient's climate label (org_labels, migration 032). "
+                   "Labels come from NTEE codes, keywords and mission-embedding similarity, then Claude reads each candidate's 990 mission and programs: "
+                   "primary = climate or clean energy is the main stated purpose, partial = one explicit climate program among broader work. "
+                   "Share = over all linked grant dollars to public charities. Full method: docs/labels/climate.md."),
+        "caveats": (ctx.link + " " + label_grade_text(gr) + "Land, wildlife and water conservation count only when the record names climate. "
+                    "Foreign recipients aren't linked, so international climate grants are missing." + LABEL_CAVEAT),
+        "sources": [SRC["pf"], SRC["990"], SRC["bmf"], {"label": "Cause label method: climate", "url": LABEL_DOC.format("climate")},
+                    {"label": "ClimateWorks Foundation, Funding Trends (mitigation, for comparison)", "url": "https://www.climateworks.org/report/funding-trends-2026/"}],
+        "query": label_year_sql("climate"),
+        "data": rows,
+        "org_eins": [r["ein"] for r in recips],
+        "checks": label_checks(t, v, orgs, gr, lab["version"]),
+    }
+
+
+@insight("flow-women-girls-share", "money-flows", 0.9, explore="nonprofits serving women and girls")
+def flow_women_girls(ctx):
+    rows, t, orgs, funders, recips, v, gr, long = label_facts("women_girls")
+    lab = q1("SELECT version FROM cause_labels WHERE label = 'women_girls'")
+    share, both = t["primary_usd"] / t["linked"], (t["primary_usd"] + t["partial_usd"]) / t["linked"]
+    top10 = sum(f["amount"] for f in funders) / t["primary_usd"]
+    chart = vbar(long, "year", "millions", "Tax year", "Foundation grants, $ millions", fmt="$,.0f", xoffset="tier")
+    return {
+        "stats": stats(("To women and girls groups, 2022–24", money(t["primary_usd"])), ("Share of linked foundation dollars", pct(share, 1)),
+                       ("With mixed groups counted", pct(both, 1)), ("Top 10 funders' share", pct(top10))),
+        "headline": f"Groups dedicated to women and girls get {pct(share, 1)} of foundation dollars",
+        "summary": (f"Nonprofits dedicated to women and girls received {money(t['primary_usd'])} of 2022–24 foundation grants, {pct(share, 1)} of linked dollars, "
+                    f"or {pct(both, 1)} counting mixed groups."),
+        "points": [f"{bold(money(t['primary_usd']))} in 2022–24 to {bold(n(orgs['p']))} groups dedicated to women and girls, {bold(pct(share, 1))} of linked dollars",
+                   f"{bold(pct(both, 1))} counting mixed groups such as Boys & Girls Clubs. The top 10 funders gave {bold(pct(top10))}",
+                   WHY + "no IRS code marks this cause, so 990 data could not count it"],
+        "chart": chart,
+        "method": ("990-PF grants for tax years 2022–24 linked to a public charity, by the recipient's women-and-girls label (org_labels, migration 032). "
+                   "Labels come from NTEE codes, keywords and mission-embedding similarity, then Claude reads each candidate's 990 mission and programs: "
+                   "primary = women and/or girls are the main intended beneficiaries, partial = an explicit focus alongside others (co-ed youth programs, "
+                   "women's collectives doing general community work). Share = over all linked grant dollars to public charities. Full method: docs/labels/women_girls.md."),
+        "caveats": (ctx.link + " " + label_grade_text(gr) + "The Women's Philanthropy Institute's index measures all giving these groups receive "
+                    "(about 2% in 2022–23), mostly from individuals, so its share is not directly comparable." + LABEL_CAVEAT),
+        "sources": [SRC["pf"], SRC["990"], SRC["bmf"], {"label": "Cause label method: women and girls", "url": LABEL_DOC.format("women_girls")},
+                    {"label": "Women's Philanthropy Institute, Women & Girls Index 2025", "url": "https://philanthropy.indianapolis.iu.edu/news-events/news/_news/2025/women-and-girls-2025.html"}],
+        "query": label_year_sql("women_girls"),
+        "data": rows,
+        "org_eins": [r["ein"] for r in recips],
+        "checks": label_checks(t, v, orgs, gr, lab["version"]),
     }
 
 

@@ -1,0 +1,130 @@
+[
+ {
+  "ein": "131644147",
+  "name": "PLANNED PARENTHOOD FEDERATION OF",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Reproductive health care, family planning advocacy and education.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "465532642",
+  "name": "NEBRASKA EARLY CHILDHOOD COLLABORATIVE",
+  "tier": "not",
+  "was": "partial",
+  "why": "Early childhood services; pregnant and parenting teens program not women-specific.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "237129564",
+  "name": "NEW YORK FOUNDATION FOR THE ARTS INC",
+  "tier": "not",
+  "was": "partial",
+  "why": "Large arts fiscal sponsor; women's fund is one program, mission unnamed.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "842627202",
+  "name": "19TH NEWS",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Journalism serving women, centered on 19th Amendment legacy.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "521772575",
+  "name": "URGE UNITE FOR REPRODUCTIVE AND GENDER EQUITY",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Reproductive and gender equity advocacy organization.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "132630359",
+  "name": "REPRODUCTIVE FREEDOM FOR ALL",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Reproductive rights and abortion access advocacy.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "273861222",
+  "name": "AFRICAN LEADERS MALARIA ALLIANCE INC",
+  "tier": "not",
+  "was": "partial",
+  "why": "Malaria focus; maternal health only within broad RMNCAH scorecard.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "251462312",
+  "name": "MAGEE-WOMENS RESEARCH INSTITUTE AND FOUNDATION",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Research institute dedicated to women's health and reproductive biology.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "954894776",
+  "name": "NEW MORNING",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Reproductive health and contraceptive access to reduce unintended pregnancies.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "112047151",
+  "name": "CATHOLIC CHARITIES NEIGHBORHOOD SERVICES INC",
+  "tier": "not",
+  "was": "partial",
+  "why": "Broad social services; pregnant women one of many populations.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "042482188",
+  "name": "MANAGEMENT SCIENCES FOR HEALTH INC",
+  "tier": "not",
+  "was": "partial",
+  "why": "Broad global health development agency; maternal health is one program, mission doesn't name women.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "131623838",
+  "name": "ENGENDERHEALTH INC",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Sexual and reproductive health, maternal health and contraceptive services.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "840404253",
+  "name": "ROCKY MOUNTAIN PLANNED PARENTHOOD INC",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Planned Parenthood reproductive health and abortion care.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "462140915",
+  "name": "ANTI-RECIDIVISM COALITION",
+  "tier": "not",
+  "was": "partial",
+  "why": "Reentry services for men and women; women's programming is one minor item.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "561191115",
+  "name": "PISGAH LEGAL SERVICES",
+  "tier": "not",
+  "was": "partial",
+  "why": "General legal aid; DV services do not name women.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ },
+ {
+  "ein": "261972058",
+  "name": "ABORTION CARE NETWORK",
+  "tier": "primary",
+  "was": "partial",
+  "why": "Supports independent abortion clinics; abortion access is reproductive health.",
+  "source": "top-100 dollar review, judge claude-opus-5-5, 2026-10-16"
+ }
+]
