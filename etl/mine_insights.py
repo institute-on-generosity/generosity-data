@@ -46,6 +46,9 @@ SRC = {
     "zcta": {"label": "Census 2020 ZCTA-to-county relationship file", "url": "https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/"},
     "arc": {"label": "Appalachian Regional Commission counties", "url": "https://www.arc.gov/appalachian-counties-served-by-arc/"},
     "ntee": {"label": "NTEE code definitions (NCCS, via Nonprofit Open Data Collective)", "url": "https://github.com/Nonprofit-Open-Data-Collective/mission-taxonomies"},
+    "990i": {"label": "IRS Form 990 e-file returns, Schedule I grants to organizations (IRS releases 2023–2026)", "url": "https://www.irs.gov/charities-non-profits/form-990-series-downloads"},
+    "usaspending": {"label": "USAspending.gov award data archive, federal assistance (grants and cooperative agreements), FY2022–2025", "url": "https://www.usaspending.gov/download_center/award_data_archive"},
+    "acs": {"label": "U.S. Census Bureau American Community Survey 5-year estimates, 2020–2024 (B17001 poverty)", "url": "https://www.census.gov/programs-surveys/acs"},
     "board": {"label": "Board members from 990 Part VII and 990-PF officer lists (generosity-data board_interlocks)", "url": "https://www.irs.gov/charities-non-profits/form-990-series-downloads"},
 }
 
@@ -2031,6 +2034,284 @@ def stress_insolvent(ctx):
         "org_eins": None,
         "cause": top["code"][0],
         "checks": [("top code recount", close(v["s"], top["liabilities_exceed_assets"], abs_=0.002)), ("n >= 400", top["charities"] >= 400)],
+    }
+
+
+# ================================================================ NEW SOURCES: SCHEDULE I, FEDERAL AWARDS, ACS
+# Schedule I grants (charity_grant_clean, migrations 041-042), USAspending federal awards (044), Census ACS (043).
+
+# The EPA Greenhouse Gas Reduction Fund: $20B+ of one-time FY2024 awards to six national green banks. Left out of
+# place comparisons, or Maryland and DC would lead on two awards.
+GGRF = "('66.957', '66.959', '66.960')"
+
+DAF_CAUSE_SQL = """WITH panel AS (
+  SELECT funder_ein FROM charity_grant_clean WHERE funder_class = 'daf_sponsor' AND tax_year IN (2022, 2024)
+  GROUP BY 1 HAVING count(DISTINCT tax_year) = 2),
+g AS (SELECT c.* FROM charity_grant_clean c JOIN panel USING (funder_ein) WHERE c.tax_year IN (2022, 2024))
+SELECT CASE WHEN to_grantmaker THEN 'grantmakers' WHEN recipient_ein IS NULL THEN 'unlinked'
+            WHEN recipient_ntee ~ '^[A-Z]' THEN left(recipient_ntee, 1) ELSE 'no_code' END AS major,
+       round(sum(amount) FILTER (WHERE tax_year = 2022)) AS usd_2022,
+       round(sum(amount) FILTER (WHERE tax_year = 2024)) AS usd_2024,
+       (SELECT count(*) FROM panel) AS sponsors
+FROM g GROUP BY 1 ORDER BY usd_2024 DESC NULLS LAST"""
+
+
+@insight("flow-daf-sponsor-causes", "money-flows", 0.88, cause="T", explore="donor-advised fund sponsors")
+def flow_daf_causes(ctx):
+    raw = q(DAF_CAUSE_SQL)
+    tot22 = sum(float(r["usd_2022"] or 0) for r in raw)
+    tot24 = sum(float(r["usd_2024"] or 0) for r in raw)
+    growth = tot24 / tot22 - 1
+    gm = next(r for r in raw if r["major"] == "grantmakers")
+    gm_g = float(gm["usd_2024"]) / float(gm["usd_2022"]) - 1
+    names = {"grantmakers": "Other grantmakers (DAF sponsors, community foundations, United Ways)"}
+    rows = []
+    for r in raw:
+        if r["major"] in ("unlinked", "no_code") or r["major"] not in MAJOR and r["major"] != "grantmakers":
+            continue
+        if float(r["usd_2024"] or 0) < 3e8 or not r["usd_2022"]:
+            continue
+        rows.append({"major": r["major"], "cause": names.get(r["major"], MAJOR.get(r["major"])),
+                     "usd_2022": r["usd_2022"], "usd_2024": r["usd_2024"],
+                     "growth": round(float(r["usd_2024"]) / float(r["usd_2022"]) - 1, 3)})
+    rows.sort(key=lambda r: -r["growth"])
+    causes = [r for r in rows if r["major"] != "grantmakers"]
+    biggest = max(causes, key=lambda r: float(r["usd_2024"]))
+    v = q1("""SELECT sum(c.amount) FILTER (WHERE c.tax_year = 2024) / sum(c.amount) FILTER (WHERE c.tax_year = 2022) - 1 AS g
+              FROM charity_grants c JOIN charity_funder_profile fp ON fp.ein = c.funder_ein
+              WHERE fp.funder_class = 'daf_sponsor' AND c.tax_year IN (2022, 2024) AND c.amount > 0 AND c.recipient_country IS NULL
+                AND c.recipient_ein IN (SELECT ein FROM charity_funder_profile WHERE funder_class IN ('daf_sponsor', 'community_foundation', 'united_way'))
+                AND c.funder_ein IN (SELECT funder_ein FROM charity_grant_clean WHERE funder_class = 'daf_sponsor' AND tax_year = 2022
+                                     INTERSECT SELECT funder_ein FROM charity_grant_clean WHERE funder_class = 'daf_sponsor' AND tax_year = 2024)""")
+    chart = diverging(rows, "cause", "growth", "Change in DAF sponsor grant dollars, 2022 to 2024 (same sponsors)")
+    layer0 = chart["layer"][0] if "layer" in chart else chart
+    layer0["encoding"]["tooltip"] += [{"field": "usd_2022", "type": "quantitative", "format": "$,.0f", "title": "2022"},
+                                      {"field": "usd_2024", "type": "quantitative", "format": "$,.0f", "title": "2024"}]
+    layer0["encoding"]["color"] = {"condition": {"test": "datum['major'] === 'grantmakers'", "value": "#d97706"}, "value": "#4c78a8"}
+    return {
+        "stats": stats(("DAF sponsor grants, 2022 to 2024", spct(growth)), ("To other grantmakers", spct(gm_g)),
+                       (f"To {biggest['cause'].lower()}", spct(biggest['growth'])), ("Sponsors compared", n(raw[0]["sponsors"]))),
+        "headline": f"DAF sponsor grants rose {pct(growth)} in two years, led by other grantmakers",
+        "summary": (f"Grants from donor-advised fund sponsors rose {pct(growth)} from 2022 to 2024. Grants to other grantmakers rose {pct(gm_g)}, "
+                    f"{biggest['cause'].lower()} {pct(biggest['growth'])}."),
+        "points": [f"{bold(money(tot22))} to {bold(money(tot24))} from the same {n(raw[0]['sponsors'])} sponsors, {bold(spct(growth))}",
+                   f"Grants to other grantmakers {bold(spct(gm_g))}. {biggest['cause']}, the biggest cause, {bold(spct(biggest['growth']))}",
+                   WHY + "more DAF money passes through a second grantmaker before reaching a charity"],
+        "chart": chart,
+        "method": ("Form 990 Schedule I grants from donor-advised fund sponsors (charity_funder_profile.funder_class = daf_sponsor: holds DAFs and DAF grants are half or more of its Schedule I grants) "
+                   "that filed for both tax years 2022 and 2024. US recipients, no private foundations. Grouped by the recipient's NTEE major group, with grants to other DAF sponsors, community "
+                   "foundations and United Ways shown apart. Chart: causes with $300M+ in 2024."),
+        "caveats": ("Schedule I lists only grants over $5,000 per recipient. Recipients are linked to an EIN for most dollars, and unlinked grants count in the total but not in any cause. "
+                    "Tax year 2025 is incomplete and left out. Grants between sponsors count twice across sponsors, so the total overstates what reaches charities."),
+        "sources": [SRC["990i"], SRC["bmf"], SRC["ntee"]],
+        "query": DAF_CAUSE_SQL,
+        "data": rows,
+        "org_eins": None,
+        "checks": [("grantmaker growth recount", close(v["g"], gm_g, abs_=0.01)), ("sponsors >= 300", int(raw[0]["sponsors"]) >= 300),
+                   ("causes >= 10", len(causes) >= 10)],
+    }
+
+
+LOCAL_SQL = """WITH g AS (
+  SELECT CASE funder_class WHEN 'community_foundation' THEN 'Community foundations' WHEN 'daf_sponsor' THEN 'DAF sponsors'
+                           WHEN 'united_way' THEN 'United Ways' ELSE 'Other charities' END AS funder_type,
+         funder_ein, funder_state, recipient_state, amount
+  FROM charity_grant_clean WHERE tax_year BETWEEN 2022 AND 2024 AND NOT to_grantmaker
+  UNION ALL
+  SELECT 'Private foundations', funder_ein, funder_state, recipient_state, amount
+  FROM grant_clean WHERE tax_year BETWEEN 2022 AND 2024)
+SELECT funder_type, count(DISTINCT funder_ein) AS funders, round(sum(amount)) AS usd_2022_24,
+       round(sum(amount) FILTER (WHERE recipient_state = funder_state) / sum(amount), 3) AS in_state_share
+FROM g WHERE funder_state IS NOT NULL GROUP BY 1 ORDER BY in_state_share DESC"""
+
+
+@insight("flow-community-vs-private", "money-flows", 0.84, explore="community foundations")
+def flow_community_vs_private(ctx):
+    rows = q(LOCAL_SQL)
+    by = {r["funder_type"]: r for r in rows}
+    cf, pf, daf, uw = by["Community foundations"], by["Private foundations"], by["DAF sponsors"], by["United Ways"]
+    v = q1("""SELECT sum(amount) FILTER (WHERE recipient_state = funder_state)::float8 / sum(amount) AS s FROM charity_grant_clean
+              WHERE funder_class = 'community_foundation' AND tax_year IN (2022, 2023, 2024) AND NOT to_grantmaker AND funder_state IS NOT NULL""")
+    chart = hbar(rows, "funder_type", "in_state_share", "Share of grant dollars to recipients in the funder's own state, 2022–24",
+                 highlight=("funder_type", "Community foundations"),
+                 tooltip_extra=[("funders", "quantitative", ","), ("usd_2022_24", "quantitative", "$,.0f")])
+    return {
+        "stats": stats(("Community foundations, in state", pct(cf["in_state_share"])), ("Private foundations, in state", pct(pf["in_state_share"])),
+                       ("DAF sponsors, in state", pct(daf["in_state_share"]))),
+        "headline": f"Community foundations keep {pct(cf['in_state_share'])} of grants in state, DAF sponsors {pct(daf['in_state_share'])}",
+        "summary": (f"Community foundations granted {pct(cf['in_state_share'])} of their 2022–24 dollars in their own state, private foundations "
+                    f"{pct(pf['in_state_share'])} and DAF sponsors {pct(daf['in_state_share'])}."),
+        "points": [f"{bold(pct(cf['in_state_share']))} of community foundation dollars stay in state, {bold(money(cf['usd_2022_24']))} in 2022–24",
+                   f"Private foundations {bold(pct(pf['in_state_share']))}, DAF sponsors {bold(pct(daf['in_state_share']))}, United Ways {bold(pct(uw['in_state_share']))}",
+                   WHY + "local causes should look to community foundations and United Ways first"],
+        "chart": chart,
+        "method": ("Grants for tax years 2022–24 to US organizations (no private foundations). Public charities from Form 990 Schedule I, by funder type (charity_funder_profile.funder_class), "
+                   "leaving out grants to other DAF sponsors, community foundations and United Ways. Private foundations from Form 990-PF (grant_clean). In state = the recipient's address is in the funder's state."),
+        "caveats": (ctx.addr + " Schedule I lists only grants over $5,000 per recipient, while 990-PF lists every grant. Community foundations include donor-advised funds they hold, "
+                    "so part of their giving is recommended by donors."),
+        "sources": [SRC["990i"], SRC["pf"], SRC["bmf"]],
+        "query": LOCAL_SQL,
+        "data": rows,
+        "org_eins": None,
+        "checks": [("community recount", close(v["s"], cf["in_state_share"], abs_=0.002)), ("community funders >= 1,000", int(cf["funders"]) >= 1000),
+                   ("five funder types", len(rows) == 5)],
+    }
+
+
+FED_STATE_SQL = f"""WITH pop AS (SELECT state, left(min(county_fips), 2)::int AS id, sum(population) AS population
+             FROM county_need WHERE county_fips <> '00000' GROUP BY state),
+fa AS (SELECT pop_state AS state, sum(amount) AS amount, count(DISTINCT recipient_name) AS recipients FROM federal_awards
+       WHERE fiscal_year BETWEEN 2022 AND 2025 AND pop_state IS NOT NULL AND cfda_number NOT IN {GGRF} GROUP BY 1)
+SELECT pop.state, pop.id, pop.population, fa.recipients, round(fa.amount) AS amount_fy2022_25,
+       round(fa.amount / pop.population / 4) AS per_resident_year
+FROM pop JOIN fa USING (state) ORDER BY per_resident_year"""
+
+
+@insight("gap-federal-per-resident", "funding-gaps", 0.8, explore="nonprofits with federal grants")
+def gap_federal_per_resident(ctx):
+    rows = q(FED_STATE_SQL)
+    for r in rows:
+        r["name"] = STATE_NAMES.get(r["state"], r["state"])
+    states = [r for r in rows if r["state"] != "DC"]
+    lo, lo2, hi = states[0], states[1], states[-1]
+    ratio = hi["per_resident_year"] / lo["per_resident_year"]
+    nat = q1(f"""SELECT sum(amount) / (SELECT sum(population) FROM county_need WHERE county_fips <> '00000') / 4 AS pc FROM federal_awards
+                 WHERE fiscal_year BETWEEN 2022 AND 2025 AND pop_state IS NOT NULL AND cfda_number NOT IN {GGRF}""")["pc"]
+    v = q1(f"""SELECT sum(amount) / (SELECT sum(population) FROM county_need WHERE state = '{lo['state']}' AND county_fips <> '00000') / 4 AS pc
+               FROM federal_awards WHERE pop_state = '{lo['state']}' AND fiscal_year IN (2022, 2023, 2024, 2025) AND cfda_number NOT IN {GGRF}""")["pc"]
+    chart = state_map(rows, "per_resident_year", "Federal grants to nonprofits, $ per resident per year", fmt="$,.0f",
+                      scale={"type": "log", "scheme": "purples"}, tooltip_extra=[("amount_fy2022_25", "quantitative", "FY2022–25", "$,.0f")])
+    return {
+        "stats": stats((f"{lo['name']}, per resident", money(lo['per_resident_year'])), (f"{hi['name']}, per resident", money(hi['per_resident_year'])),
+                       ("US, per resident", money(nat)), ("Gap", f"{ratio:.0f}x")),
+        "headline": f"{hi['name']} gets {ratio:.0f} times {lo['name']}'s federal nonprofit grants per resident",
+        "summary": (f"Federal grants to nonprofits average {money(lo['per_resident_year'])} per resident a year where the work happens in {lo['name']}, "
+                    f"{money(hi['per_resident_year'])} in {hi['name']}."),
+        "points": [f"{bold(money(lo['per_resident_year']))} per resident a year in {lo['name']}, {bold(money(lo2['per_resident_year']))} in {lo2['name']}, the lowest",
+                   f"{bold(money(hi['per_resident_year']))} in {hi['name']}, home to large research universities. US average {bold(money(nat))}",
+                   WHY + "research money clusters, so per-resident federal support is uneven"],
+        "chart": chart,
+        "method": ("USAspending grants and cooperative agreements to nonprofits and private colleges, federal fiscal years 2022–25 (net obligations), summed by place of performance state, "
+                   "divided by 2024 Census population and by 4 years. The EPA Greenhouse Gas Reduction Fund ($22B of one-time FY2024 awards to six national funds) is left out. Colors on a log scale."),
+        "caveats": ("Direct (prime) federal awards only: money passed through state governments, contracts, loans and grants to public universities and governments are not counted. "
+                    "Awards with no single state of performance (multi-state, abroad) are left out. Research grants follow universities and medical centers."),
+        "sources": [SRC["usaspending"], SRC["pop"]],
+        "query": FED_STATE_SQL,
+        "data": rows,
+        "org_eins": None,
+        "checks": [(f"{lo['state']} recount", close(v, lo["per_resident_year"], rel=0.01, abs_=1)), ("50+ states", len(rows) >= 50)],
+    }
+
+
+POVERTY_BAND = """CASE WHEN a.poverty_rate < 10 THEN '1 Under 10%' WHEN a.poverty_rate < 15 THEN '2 10–15%' WHEN a.poverty_rate < 20 THEN '3 15–20%'
+            WHEN a.poverty_rate < 25 THEN '4 20–25%' ELSE '5 25% or more' END"""
+POVERTY_SOURCES_SQL = f"""WITH c AS (
+  SELECT a.county_fips, a.people_in_poverty AS poor, {POVERTY_BAND} AS band
+  FROM county_acs a WHERE a.level = 'county' AND a.people_in_poverty > 0),
+pf AS (SELECT county_fips, sum(amount) AS usd FROM grant_clean WHERE tax_year BETWEEN 2022 AND 2024 GROUP BY 1),
+ci AS (SELECT county_fips, sum(amount) AS usd FROM charity_grant_clean WHERE tax_year BETWEEN 2022 AND 2024 AND NOT to_grantmaker GROUP BY 1),
+fe AS (SELECT pop_county_fips AS county_fips, sum(amount) AS usd FROM federal_awards
+       WHERE fiscal_year BETWEEN 2022 AND 2024 AND cfda_number NOT IN {GGRF} GROUP BY 1)
+SELECT c.band, count(*) AS counties, sum(c.poor) AS people_in_poverty,
+       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(pf.usd, 0) / c.poor / 3)::numeric, 2) AS foundations,
+       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(ci.usd, 0) / c.poor / 3)::numeric, 2) AS public_charities,
+       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(fe.usd, 0) / c.poor / 3)::numeric, 2) AS federal
+FROM c LEFT JOIN pf USING (county_fips) LEFT JOIN ci USING (county_fips) LEFT JOIN fe USING (county_fips)
+GROUP BY 1 ORDER BY 1"""
+
+
+@insight("gap-poverty-federal-vs-foundation", "funding-gaps", 0.86, explore="anti-poverty programs in high-poverty counties")
+def gap_poverty_sources(ctx):
+    rows = q(POVERTY_SOURCES_SQL)
+    lo, hi = rows[0], rows[-1]
+    for r in rows:
+        r["band"] = strip_band(r["band"])
+    pf_drop = float(lo["foundations"]) / float(hi["foundations"])
+    v = q1(f"""WITH c AS (SELECT county_fips, people_in_poverty AS poor FROM county_acs WHERE level = 'county' AND people_in_poverty > 0 AND poverty_rate >= 25),
+               fe AS (SELECT pop_county_fips AS county_fips, sum(amount) AS usd FROM federal_awards
+                      WHERE fiscal_year IN (2022, 2023, 2024) AND cfda_number NOT IN {GGRF} AND pop_county_fips IN (SELECT county_fips FROM c) GROUP BY 1),
+               pf AS (SELECT county_fips, sum(amount) AS usd FROM grant_clean WHERE tax_year IN (2022, 2023, 2024) AND county_fips IN (SELECT county_fips FROM c) GROUP BY 1)
+               SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(fe.usd, 0) / c.poor / 3) AS fed,
+                      percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(pf.usd, 0) / c.poor / 3) AS pf, count(*) AS n
+               FROM c LEFT JOIN fe USING (county_fips) LEFT JOIN pf USING (county_fips)""")
+    long = [{"band": r["band"], "source": s, "per_person": float(r[k])} for r in rows
+            for s, k in (("Private foundations (990-PF)", "foundations"), ("Public charities (Schedule I)", "public_charities"), ("Federal awards", "federal"))]
+    chart = vbar(long, "band", "per_person", "County poverty rate (ACS 2020–24)", "Median county: $ per person in poverty per year",
+                 fmt="$,.0f", sort=None, xoffset="source", color_title=None)
+    return {
+        "stats": stats(("Foundations, poorest counties", money(hi['foundations'])), ("Foundations, least-poor counties", money(lo['foundations'])),
+                       ("Federal, poorest counties", money(hi['federal'])), ("Federal, least-poor counties", money(lo['federal']))),
+        "headline": f"Foundation money per poor person falls {pf_drop:.0f}-fold with poverty, federal money barely moves",
+        "summary": (f"In typical 25%+ poverty counties, foundations give {money(hi['foundations'])} per poor person a year, versus {money(lo['foundations'])} "
+                    f"under 10%. Federal: {money(hi['federal'])} versus {money(lo['federal'])}."),
+        "points": [f"Foundations: {bold(money(lo['foundations']))} per poor person a year under 10% poverty, {bold(money(hi['foundations']))} at 25%+",
+                   f"Federal awards: {bold(money(lo['federal']))} versus {bold(money(hi['federal']))}, close to flat",
+                   WHY + "in the poorest counties federal grants outweigh foundation dollars"],
+        "chart": chart,
+        "method": ("Counties grouped by ACS 2020–24 poverty rate. For each county: 2022–24 990-PF grants (grant_clean) and Schedule I grants from public charities (charity_grant_clean, "
+                   "leaving out grants to other grantmakers) placed by recipient ZIP, and FY2022–24 federal grants to nonprofits placed by county of performance (Greenhouse Gas Reduction Fund left out), "
+                   "each divided by people in poverty and 3 years. Bars show each group's median county."),
+        "caveats": (ctx.addr + " Federal awards with no county of performance (statewide or multi-state, about $100B) are left out, so federal figures are floors. "
+                    "Federal fiscal years differ from tax years. Schedule I lists only grants over $5,000 per recipient."),
+        "sources": [SRC["pf"], SRC["990i"], SRC["usaspending"], SRC["acs"], SRC["zcta"]],
+        "query": POVERTY_SOURCES_SQL,
+        "data": rows,
+        "org_eins": None,
+        "checks": [("25%+ federal recount", close(v["fed"], hi["federal"], rel=0.01, abs_=0.5)),
+                   ("25%+ foundation recount", close(v["pf"], hi["foundations"], rel=0.01, abs_=0.5)),
+                   ("100+ counties per band", min(int(r["counties"]) for r in rows) >= 100)],
+    }
+
+
+FED_990_SQL = f"""WITH ff AS (
+  SELECT DISTINCT ON (ein) ein, government_grants FROM filing_flag WHERE form = '990' AND tax_year = 2024 ORDER BY ein, object_id DESC),
+fe AS (SELECT recipient_ein AS ein, sum(amount) AS fed FROM federal_awards
+       WHERE fiscal_year = 2024 AND recipient_ein IS NOT NULL AND cfda_number NOT IN {GGRF} GROUP BY 1)
+SELECT CASE WHEN o.ntee_cd ~ '^[A-Z]' THEN left(o.ntee_cd, 1) ELSE '?' END AS major, count(*) AS orgs,
+       round(sum(fe.fed)) AS federal_fy2024, round(sum(coalesce(ff.government_grants, 0))) AS gov_grants_990_2024,
+       round(sum(fe.fed) / nullif(sum(coalesce(ff.government_grants, 0)), 0), 3) AS federal_share,
+       round(avg((fe.fed > coalesce(ff.government_grants, 0))::int), 3) AS federal_above_990
+FROM fe JOIN ff USING (ein) JOIN orgs o USING (ein)
+GROUP BY 1 ORDER BY gov_grants_990_2024 DESC"""
+
+
+@insight("stress-federal-vs-990-government", "financial-stress", 0.78, explore="nonprofits funded by federal grants")
+def stress_federal_vs_990(ctx):
+    raw = q(FED_990_SQL)
+    fed = sum(float(r["federal_fy2024"]) for r in raw)
+    gov = sum(float(r["gov_grants_990_2024"]) for r in raw)
+    orgs = sum(int(r["orgs"]) for r in raw)
+    above = sum(float(r["federal_above_990"]) * int(r["orgs"]) for r in raw) / orgs
+    rows = [dict(r, cause=MAJOR.get(r["major"], "No cause code")) for r in raw if int(r["orgs"]) >= 100 and r["major"] != "?"]
+    rows.sort(key=lambda r: float(r["federal_share"] or 0))
+    v = q1(f"""SELECT sum(fe.fed) AS fed, sum(coalesce(ff.government_grants, 0)) AS gov, count(*) AS n FROM
+               (SELECT recipient_ein AS ein, sum(amount) AS fed FROM federal_awards WHERE fiscal_year = 2024 AND recipient_ein IS NOT NULL AND cfda_number NOT IN {GGRF} GROUP BY 1) fe
+               JOIN LATERAL (SELECT government_grants FROM filing_flag x WHERE x.ein = fe.ein AND x.form = '990' AND x.tax_year = 2024 ORDER BY x.object_id DESC LIMIT 1) ff ON true
+               JOIN orgs o ON o.ein = fe.ein""")
+    chart = hbar(rows, "cause", "federal_share", "Direct federal awards (FY2024) as a share of government grants on the 990 (2024)",
+                 rule=fed / gov, tooltip_extra=[("orgs", "quantitative", ","), ("federal_fy2024", "quantitative", "$,.0f"),
+                                                ("gov_grants_990_2024", "quantitative", "$,.0f"), ("federal_above_990", "quantitative", ".0%")])
+    low = rows[0]
+    return {
+        "stats": stats(("Direct federal awards, FY2024", money(fed)), ("Government grants on the 990, 2024", money(gov)), ("Federal share", pct(fed / gov)),
+                       ("Recipients compared", n(orgs))),
+        "headline": f"Direct federal grants are {frac(fed / gov)} of the government grants charities report",
+        "summary": (f"For {n(orgs)} federal grantees with a 2024 Form 990, FY2024 direct federal awards were {money(fed)}, against {money(gov)} "
+                    f"they reported as government grants."),
+        "points": [f"{bold(money(fed))} in direct federal awards versus {bold(money(gov))} on line 1e, {bold(pct(fed / gov))}",
+                   f"{bold(pct(above))} report less on line 1e than their FY2024 federal awards",
+                   WHY + "most government money reaches charities through states and cities"],
+        "chart": chart,
+        "method": ("Nonprofits linked to USAspending grants and cooperative agreements in federal fiscal year 2024 (Greenhouse Gas Reduction Fund left out) that filed a full Form 990 for tax year 2024: "
+                   "sum of their federal awards versus Part VIII line 1e (government grants), by NTEE major group (100+ organizations). Dashed line = all."),
+        "caveats": ("Line 1e counts federal, state and local grants together, including federal money passed through states. Federal fiscal years (October to September) differ from tax years. "
+                    "USAspending amounts are net obligations, not cash received. Federal awards are linked to 990 filers by name and place, so a few links are wrong."),
+        "sources": [SRC["usaspending"], SRC["990"], SRC["ntee"]],
+        "query": FED_990_SQL,
+        "data": rows,
+        "org_eins": None,
+        "checks": [("federal recount", close(v["fed"], fed, rel=0.001)), ("990 recount", close(v["gov"], gov, rel=0.001)),
+                   ("orgs >= 5,000", orgs >= 5000), ("lowest group n >= 100", int(low["orgs"]) >= 100)],
     }
 
 

@@ -13,14 +13,18 @@ period: the newest filed (highest object id), as in etl/load_grants.py.
   filer   ReturnHeader Filer; IRS990 DonorAdvisedFundInd (Part IV line 6), GrantsToDomesticOrgsGrp/TotalAmt
           (Part IX line 1); IRS990ScheduleD DonorAdvisedFunds{HeldCnt,ContriAmt,GrantsAmt,VlEOYAmt} (Part I)
   grants  IRS990ScheduleI/RecipientTable: name, US or foreign address, RecipientEIN, IRCSectionDesc,
-          CashGrantAmt, NonCashAssistanceAmt, NonCashAssistanceDesc, PurposeOfGrantTxt
+          CashGrantAmt, NonCashAssistanceAmt, NonCashAssistanceDesc, PurposeOfGrantTxt. A line with no
+          RecipientBusinessName takes its name from AddressLine1Txt when that isn't a street address (some
+          software writes "NAME-STREET" there); lines with only an amount (often a total) are skipped.
           Part III (grants to individuals) is not loaded.
+  coverage  declared_orgs = Schedule I Part I lines 2 + 3; placeholder_usd = lines naming no recipient
+          (is_placeholder_recipient(), migration 048); charity_filers.coverage / coverage_note follow.
 Recipient linking:
   ein         the reported RecipientEIN is an org in `orgs`                         score 1
   then etl/org_matcher.py (the 990-PF matcher's rules), same state only, for lines with no usable EIN:
   exact, exact-city, fuzzy (same city, similarity >= 0.7)
 """
-import csv, functools, os, subprocess, sys, tempfile, time, xml.etree.ElementTree as ET
+import csv, functools, os, re, subprocess, sys, tempfile, time, xml.etree.ElementTree as ET
 sys.path.insert(0, os.path.dirname(__file__))
 from multiprocessing import Pool
 
@@ -55,6 +59,14 @@ def flag(s):
     s = (s or "").strip().lower()
     return "t" if s in ("1", "true", "x") else "f" if s in ("0", "false") else ""
 
+STREET = re.compile(r"^(\d|p\.?\s*o\.?\s*box\b)", re.I)
+
+def address_name(addr):
+    """Recipient name written in the address block: AddressLine1Txt, cut at "-<street number>"."""
+    a1 = text(child(addr, "AddressLine1Txt"))
+    a1 = re.sub(r"\s*-\s*\d.*$", "", a1).strip(" -")
+    return "" if not a1 or STREET.match(a1) else a1
+
 def parse(path):
     with open(path, "rb") as f:
         raw = f.read()
@@ -78,9 +90,11 @@ def parse(path):
         for r in (c for c in si if local(c.tag) == "RecipientTable"):
             biz = child(r, "RecipientBusinessName")
             name = " ".join(text(e) for e in biz if local(e.tag).startswith("BusinessNameLine")) if biz is not None else ""
+            us, fa = child(r, "USAddress"), child(r, "ForeignAddress")
+            if not name and biz is None:
+                name = address_name(us if us is not None else fa)
             if not name:
                 continue
-            us, fa = child(r, "USAddress"), child(r, "ForeignAddress")
             if us is not None:
                 rc, rs, rz, country = text(child(us, "CityNm")), text(child(us, "StateAbbreviationCd"))[:2], text(child(us, "ZIPCd"))[:5], ""
             elif fa is not None:
@@ -94,10 +108,12 @@ def parse(path):
                            text(child(r, "IRCSectionDesc"))[:40], cash, nonc, amt, text(child(r, "PurposeOfGrantTxt"))[:500],
                            text(child(r, "NonCashAssistanceDesc"))[:200]])
     usd = sum(int(g[12] or 0) for g in grants)
+    counts = [num(text(child(si, t))) for si in data if local(si.tag) == "IRS990ScheduleI" for t in ("Total501c3OrgCnt", "TotalOtherOrgCnt")]
+    declared = str(sum(int(c) for c in counts if c)) if any(counts) else ""
     filer = [oid, ein, year, filer_name, city, state, flag(text(child(f990, "DonorAdvisedFundInd"))),
              num(text(desc(sd, "DonorAdvisedFundsHeldCnt"))), num(text(desc(sd, "DonorAdvisedFundsContriAmt"))),
              num(text(desc(sd, "DonorAdvisedFundsGrantsAmt"))), num(text(desc(sd, "DonorAdvisedFundsVlEOYAmt"))),
-             num(text(child(f990, "GrantsToDomesticOrgsGrp", "TotalAmt"))), len(grants), usd]
+             num(text(child(f990, "GrantsToDomesticOrgsGrp", "TotalAmt"))), len(grants), usd, declared]
     return filer, grants
 
 def safe_parse(path):
@@ -114,6 +130,13 @@ def psql(sql, *args):
 
 from org_matcher import link
 
+# charity_filers.placeholder_usd for newly loaded returns (NULL until set): lines naming no recipient (migration 048)
+PLACEHOLDER_SQL = """UPDATE charity_filers f SET placeholder_usd = coalesce(p.usd, 0)
+FROM charity_filers n LEFT JOIN (SELECT object_id, sum(amount) AS usd FROM charity_grants
+  WHERE object_id IN (SELECT object_id FROM charity_filers WHERE placeholder_usd IS NULL)
+    AND is_placeholder_recipient(recipient_name) GROUP BY object_id) p ON p.object_id = n.object_id
+WHERE n.placeholder_usd IS NULL AND f.object_id = n.object_id;"""
+
 def match():
     """Link recipients: the reported EIN when it's an org we know, then the shared name matcher."""
     link("charity_grants", "cm", pre="""
@@ -124,7 +147,8 @@ FROM orgs o WHERE o.ein = c.reported_ein;""")
 def add(dirs):
     """--add DIR...: load only the returns in DIR (e.g. data/xml/recovered/2025 from etl/recover_missing_xml.py).
     A return is read only if it is the newest on disk for its (filer, tax period), as in the full load; the
-    filer's older return for that period, if loaded, is replaced. Only the added lines are linked."""
+    filer's loaded return for that period (an older one, or the same one parsed again) is replaced. Only the
+    added lines are linked."""
     meta, disk = {}, {}
     for idx in os.listdir(XML):
         if idx.startswith("index_") and idx.endswith(".csv"):
@@ -145,7 +169,7 @@ def add(dirs):
                 take[meta[oid]] = os.path.join(src, f)
     keys = set(take)
     loaded = [l.split("|") for l in psql("SELECT object_id || '|' || ein FROM charity_filers", "-At").split()]
-    replaced = [oid for oid, ein in loaded if oid in meta and meta[oid] in keys and oid != disk[meta[oid]]]
+    replaced = [oid for oid, ein in loaded if oid in meta and meta[oid] in keys]
     print(f"{len(take)} returns in {', '.join(dirs)} are the newest for their filer and period ({len(replaced)} replace a loaded return)")
     tmp = tempfile.mkdtemp(prefix="charity-add-", dir=XML)
     fpath, gpath, rpath = (os.path.join(tmp, f) for f in ("filers.csv", "grants.csv", "replaced.txt"))
@@ -165,13 +189,14 @@ CREATE TEMP TABLE replaced (object_id text);
 \\copy replaced FROM '{rpath}'
 DELETE FROM charity_grants WHERE object_id IN (SELECT object_id FROM replaced);
 DELETE FROM charity_filers WHERE object_id IN (SELECT object_id FROM replaced);
-\\copy charity_filers (object_id, ein, tax_year, name, city, state, holds_dafs, daf_count, daf_contributions, daf_grants, daf_value, grants_domestic, sched_i_rows, sched_i_usd) FROM '{fpath}' WITH (FORMAT csv, NULL '')
+\\copy charity_filers (object_id, ein, tax_year, name, city, state, holds_dafs, daf_count, daf_contributions, daf_grants, daf_value, grants_domestic, sched_i_rows, sched_i_usd, declared_orgs) FROM '{fpath}' WITH (FORMAT csv, NULL '')
 \\copy charity_grants (funder_ein, object_id, tax_year, recipient_name, recipient_city, recipient_state, recipient_zip, recipient_country, reported_ein, irc_section, cash, noncash, amount, purpose, noncash_desc) FROM '{gpath}' WITH (FORMAT csv, NULL '')
+{PLACEHOLDER_SQL}
 SELECT count(*) FROM charity_grants WHERE id > {after};
 COMMIT;""", "-At")
     for p in (fpath, gpath, rpath): os.remove(p)
     os.rmdir(tmp)
-    print(f"filers with Schedule I: {n_f} · lines parsed: {n_g} · inserted: {out.split()[-1]} · returns replaced: {len(replaced)} "
+    print(f"filers with Schedule I: {n_f} · lines parsed: {n_g} · inserted: {out.split()[-1]} · returns reloaded or replaced: {len(replaced)} "
           f"· unparseable: {bad} · new line ids > {after}")
     link_added(int(after))
 
@@ -216,8 +241,9 @@ def main():
     print(f"parsed in {time.time() - t0:.0f}s: {n_f} returns with Schedule I · {n_g} grant lines · unparseable files: {bad}")
     psql(f"""BEGIN;
 TRUNCATE charity_grants, charity_filers RESTART IDENTITY;
-\\copy charity_filers (object_id, ein, tax_year, name, city, state, holds_dafs, daf_count, daf_contributions, daf_grants, daf_value, grants_domestic, sched_i_rows, sched_i_usd) FROM '{fpath}' WITH (FORMAT csv, NULL '')
+\\copy charity_filers (object_id, ein, tax_year, name, city, state, holds_dafs, daf_count, daf_contributions, daf_grants, daf_value, grants_domestic, sched_i_rows, sched_i_usd, declared_orgs) FROM '{fpath}' WITH (FORMAT csv, NULL '')
 \\copy charity_grants (funder_ein, object_id, tax_year, recipient_name, recipient_city, recipient_state, recipient_zip, recipient_country, reported_ein, irc_section, cash, noncash, amount, purpose, noncash_desc) FROM '{gpath}' WITH (FORMAT csv, NULL '')
+{PLACEHOLDER_SQL}
 COMMIT;""")
     for p in (fpath, gpath): os.remove(p)
     os.rmdir(tmp)

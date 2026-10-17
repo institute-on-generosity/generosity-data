@@ -17,8 +17,13 @@ corporate), so the flag is built from evidence on the return itself:
   hq           that SEC company's business or mailing address is the foundation's city and state
                (data.sec.gov submissions, cached in data/sec/addresses.json)
   address      the contributor shares the foundation's street address (the company houses it)
+  street       the foundation's house number and street are the SEC company's (stronger `hq`)
+  brand        the stem is a made-up word naming a top-750 listed company ("Amgen", "Cigna", "Truist"),
+               or the whole stem is a multi-word listed name ("American Electric Power")
+  website      the foundation's website is the company's .com site ("cigna.com/...")
+  addr_name    the foundation's street is named for the company ("One Amgen Center Drive"); recorded only
 
-A foundation is flagged with `corp_name`, or `contributor`, or `sec` + `hq`. Namesake-family foundations
+A foundation is flagged with `corp_name`, or `contributor`, or `sec` + `hq`, or `brand`, or `sec` + `website`. Namesake-family foundations
 (Ford, Hewlett, Packard, Kellogg, Gates, Walton) fail on evidence: their stems are people's names
 ("W K Kellogg", "Bill & Melinda Gates"), and their Schedule B donors are the family's trusts, estates and
 people ("WK KELLOGG FOUNDATION TRUST", "LUKAS T WALTON"), which blocks a name-only match. A short surname
@@ -205,7 +210,26 @@ def given_names():
     return words
 
 
-def sec_names():
+# Industry words a company stem may end with that a foundation drops ("Truist Financial" -> Truist Foundation,
+# "Cigna Group", "Prudential Insurance", "Toyota Motor", "M&T Bank").
+INDUSTRY = r"(?:financial services|financial group|financial|group|holdings?|bancorp|bancshares|bankshares|banc|bank|insurance|mutual|life|brands|systems|technologies|motors?|health|healthcare|services|international|intl)"
+
+
+def core(st):
+    """A stem without trailing industry words: "truist financial" -> "truist". Empty when nothing is left."""
+    c = strip_end(st, INDUSTRY)
+    return c if c != st and len(c) >= 2 else ""
+
+
+def singular(st):
+    return st[:-1] if len(st) >= 6 and st.endswith("s") and not st.endswith("ss") else ""   # "walgreens" -> "walgreen"
+
+
+def sec_names(cache):
+    """SEC company names -> {stem: [(name, cik, ticker, rank, current)]}. current: a ticker title or current EDGAR name, not a former one. rank: place in company_tickers.json (EDGAR
+    orders it by market value, 0 = largest), None for unlisted EDGAR filers. Keys are each name's stem and its
+    `core()`; the 1,500 largest listed companies add their current and former EDGAR names (GE Aerospace was
+    General Electric, Walgreens Boots Alliance was Walgreen)."""
     os.makedirs(SEC, exist_ok=True)
     for fn, url in (("company_tickers.json", "https://www.sec.gov/files/company_tickers.json"),
                     ("cik-lookup-data.txt", "https://www.sec.gov/Archives/edgar/cik-lookup-data.txt")):
@@ -214,52 +238,105 @@ def sec_names():
             print(f"downloading {url}", flush=True)
             req = urllib.request.Request(url, headers={"User-Agent": UA})
             with urllib.request.urlopen(req, timeout=300) as r, open(p, "wb") as f: f.write(r.read())
-    tick = {}
-    for v in json.load(open(os.path.join(SEC, "company_tickers.json"))).values():
-        st = cstem(v["title"])
-        if st: tick.setdefault(st, (v["title"], v["cik_str"], v["ticker"]))
-        if re.fullmatch(r"[A-Z]{2,5}", v["ticker"]): tick.setdefault("$" + v["ticker"].lower(), (v["title"], v["cik_str"], v["ticker"]))
-    full = {}
-    suffix = re.compile(r"\b(?:inc|corp|corporation|company|co|ltd|plc|llc|holdings|bancorp|bancshares)\b\.?\s*$", re.I)
+    tick, full = {}, {}
+
+    def add(d, name, e, cap=4):
+        st = cstem(name)
+        for k in dict.fromkeys(x for x in (st, core(st)) if x):
+            lst = d.setdefault(k, [])
+            if len(lst) < cap and all(x[1] != e[1] for x in lst): lst.append(e)
+
+    rows = list(json.load(open(os.path.join(SEC, "company_tickers.json"))).values())
+    for i, v in enumerate(rows):
+        e = (v["title"], v["cik_str"], v["ticker"], i, True)
+        add(tick, v["title"], e)
+        if re.fullmatch(r"[A-Z]{2,5}", v["ticker"]): tick.setdefault("$" + v["ticker"].lower(), [e])
+    big = {}
+    for i, v in enumerate(rows[:1500]):
+        big.setdefault(v["cik_str"], (v["ticker"], i))
+    for cik, (tk, i) in big.items():
+        d = sec_address(cik, cache, former=True)
+        for nm in [d.get("name")] + [f.get("name") if isinstance(f, dict) else f for f in d.get("former") or []]:
+            if nm: add(tick, nm, (nm, cik, tk, i, nm == d.get("name")))
+    json.dump(cache, open(os.path.join(SEC, "addresses.json"), "w"))
+    suffix = re.compile(r"\b(?:inc|corp|corporation|company|co|ltd|plc|llc|holdings|bancorp|bancshares|bank|national association|n a)\b\.?\s*$", re.I)
     with open(os.path.join(SEC, "cik-lookup-data.txt"), encoding="latin-1") as f:
         for line in f:
             name, _, rest = line.rstrip("\n").rpartition(":")[0].rpartition(":")
-            if not name or not suffix.search(name.strip()) or re.search(r"\b(?:fund|trust|foundation|estate|lp|l p|partners|capital|investors|ventures|properties|realty|acquisition|spac)\b", name, re.I):
+            if not name or not suffix.search(re.sub(r"\s*/[A-Z]{2}/?\s*$", "", name.strip())) or re.search(r"\b(?:fund|trust|foundation|estate|lp|l p|partners|capital|investors|ventures|properties|realty|acquisition|spac)\b", name, re.I):
                 continue
-            st = cstem(name)
-            if st: full.setdefault(st, (name.strip(), int(rest) if rest.isdigit() else None, None))
+            add(full, name, (name.strip(), int(rest) if rest.isdigit() else None, None, None, False), cap=3)
     print(f"SEC: {len(tick):,} listed company stems, {len(full):,} EDGAR company stems", flush=True)
     return tick, full
 
 
-def sec_address(cik, cache):
-    """Business and mailing address of an SEC filer (data.sec.gov submissions), cached in data/sec/addresses.json."""
+def sec_address(cik, cache, former=False):
+    """Business and mailing address (and former names) of an SEC filer (data.sec.gov submissions), cached in
+    data/sec/addresses.json."""
     k = str(cik)
-    if k not in cache:
+    if k not in cache or (former and "former" not in cache[k] and "error" not in cache[k]):
         time.sleep(0.12)   # SEC fair access: under 10 requests a second
         try:
             req = urllib.request.Request(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json", headers={"User-Agent": UA})
             with urllib.request.urlopen(req, timeout=60) as r: d = json.load(r)
             a = d.get("addresses", {})
-            cache[k] = {"name": d.get("name"), "biz": a.get("business"), "mail": a.get("mailing")}
+            cache[k] = {"name": d.get("name"), "biz": a.get("business"), "mail": a.get("mailing"),
+                        "former": [{"name": x.get("name")} for x in d.get("formerNames") or []], "website": d.get("website") or ""}
         except Exception as e:  # noqa: BLE001  a missing filer just has no address
             cache[k] = {"name": None, "biz": None, "mail": None, "error": str(e)[:80]}
         if len(cache) % 100 == 0: json.dump(cache, open(os.path.join(SEC, "addresses.json"), "w"))
     return cache[k]
 
 
-def hq_match(cik, city, state, cache):
-    """"city": the foundation's city and state are the company's business or mailing address (the company
-    houses it). "state": same state only. None: neither."""
+NUMWORD = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"}
+STREETWORD = {"street": "st", "road": "rd", "drive": "dr", "avenue": "ave", "av": "ave", "boulevard": "blvd", "parkway": "pkwy",
+              "place": "pl", "plaza": "plz", "center": "ctr", "centre": "ctr", "square": "sq", "north": "n", "south": "s",
+              "east": "e", "west": "w", "lane": "ln", "court": "ct", "circle": "cir", "highway": "hwy", "way": "way"}
+
+
+def street_key(a):
+    """"1 NATIONWIDE PLAZA 1-LC-IRS" -> ("1", "nationwide"): house number and first street word. None for PO boxes."""
+    t = [NUMWORD.get(w, STREETWORD.get(w, w)) for w in norm(a).split()]
+    if len(t) < 2 or not t[0].isdigit() or t[0] == "0": return None
+    rest = [w for w in t[1:] if w not in ("n", "s", "e", "w")]
+    return (t[0], rest[0]) if rest else None
+
+
+def hq_match(cik, city, state, a1, zip5, cache):
+    """"street": the foundation's street address is the company's business or mailing address (number and street,
+    same ZIP or city). "city": same city and state (the company houses it). "state": same state only. None: neither."""
     if not cik or not state: return None
     a = [x for x in (lambda d: (d.get("biz"), d.get("mail")))(sec_address(cik, cache)) if x]
+    sk = street_key(a1) if a1 else None
+    for x in a:
+        same_city = city and norm(x.get("city") or "") == norm(city) and x.get("stateOrCountry") == state
+        if sk and street_key(x.get("street1") or "") == sk and (same_city or (x.get("zipCode") or "")[:5] == zip5): return "street"
     if city and any(norm(x.get("city") or "") == norm(city) and x.get("stateOrCountry") == state for x in a): return "city"
     return "state" if any(x.get("stateOrCountry") == state for x in a) else None
+
+
+# The foundation's street is named after the company: "1 Nationwide Plaza", "One Amgen Center Drive".
+ADDR_NAMED = r"^(?:\d+\w*|one|two|three|four|five) {} (?:plaza|plz|center|centre|ctr|campus|tower|towers|place|pl|square|sq|park|building|bldg|headquarters|hq|circle|cir|commons|corporate|global|world|way|drive|dr|pkwy|parkway|blvd|boulevard)\b"
+
+
+def web_label(w):
+    """"HTTP:/WWW.CIGNA.COM/ABOUTUS/..." -> "cigna": the site's name when it is a .com site, else ""."""
+    h = re.sub(r"^[a-z]+:/*", "", (w or "").strip().lower()).split("/")[0].split("?")[0]
+    parts = [p for p in h.split(".") if p]
+    return parts[-2] if len(parts) >= 2 and parts[-1] == "com" else ""
 
 
 DICT = set()
 try: DICT = {w.strip().lower() for w in open("/usr/share/dict/words")}
 except OSError: pass
+
+
+STATES = {"alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware", "florida", "georgia",
+          "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine", "maryland", "massachusetts",
+          "michigan", "minnesota", "mississippi", "missouri", "montana", "nebraska", "nevada", "new hampshire", "new jersey",
+          "new mexico", "new york", "north carolina", "north dakota", "oklahoma", "oregon", "pennsylvania", "rhode island",
+          "south carolina", "south dakota", "tennessee", "texas", "utah", "vermont", "virginia", "washington", "west virginia",
+          "wisconsin", "wyoming"}
 
 
 def coined(st, first):
@@ -285,11 +362,31 @@ def match(st, cs, first):
     return False
 
 
+def lookup(d, st):
+    """SEC entries for a foundation stem: the stem itself, then its core ("cigna group" -> "cigna"), then its
+    singular ("walgreens" -> "walgreen"). Returns (entries, key)."""
+    for k in dict.fromkeys(x for x in (st, core(st), singular(st)) if x and (x == st or x not in GENERIC)):
+        if d.get(k):
+            # "ge": GE HealthCare's core name, but the ticker GE is the closer match
+            if k == st and " " not in st and d.get("$" + st) and not any(cstem(e[0]) == k for e in d[k]): return d["$" + st] + d[k], k
+            return d[k], k
+    if " " not in st and d.get("$" + st): return d["$" + st], "$" + st   # "$ups": ticker UPS
+    return [], st
+
+
 def score(dry=False):
     first = given_names() - {"bank", "general", "american", "united", "first", "national", "home", "farm", "state", "union", "city", "us"}
-    tick, full = sec_names()
+    # Last names of board members ("Pearson", "Eaton", "Waters") and filers' city names ("Fairfax", "Brookfield"):
+    # a brand-like stem that is one of these may be a family or a place, not the listed company.
+    surnames = set(psql("""SELECT lower(substring(name FROM '([A-Za-z]+)\\s*$')) FROM board_members WHERE name ~ '^[A-Za-z]+ '
+                             GROUP BY 1 HAVING count(*) >= 10""").split())
+    cities = set(norm(c) for c in psql("SELECT DISTINCT city FROM pf_filer_address WHERE city IS NOT NULL").splitlines())
+    apath = os.path.join(SEC, "addresses.json")
+    sec_addr = json.load(open(apath)) if os.path.exists(apath) else {}
+    tick, full = sec_names(sec_addr)
     funders = [l.split("|") for l in psql("""SELECT f.ein, replace(f.name, '|', ' '), coalesce(f.assets, 0), replace(coalesce(o.name, ''), '|', ' '),
-        replace(coalesce(fa.address1, ''), '|', ' '), coalesce(fa.zip, ''), coalesce(fa.city, f.city, ''), coalesce(fa.state, f.state, '')
+        replace(coalesce(fa.address1, ''), '|', ' '), coalesce(fa.zip, ''), coalesce(fa.city, f.city, ''), coalesce(fa.state, f.state, ''),
+        replace(coalesce(f.website, ''), '|', ' ')
       FROM funders f LEFT JOIN orgs o ON o.ein = f.ein LEFT JOIN pf_filer_address fa ON fa.object_id = f.object_id""").splitlines()]
     contrib = {}
     for l in psql("""SELECT ein, replace(name, '|', ' '), replace(coalesce(address1, ''), '|', ' '), coalesce(zip, ''), coalesce(sum(amount), 0)
@@ -297,18 +394,24 @@ def score(dry=False):
         ein, name, a1, z, amt = l.split("|")
         contrib.setdefault(ein, []).append((name, a1, z, int(amt or 0)))
     out = []
-    apath = os.path.join(SEC, "addresses.json")
-    sec_addr = json.load(open(apath)) if os.path.exists(apath) else {}
-    for ein, name, assets, bmf_name, a1, zip5, fcity, fstate in funders:
+    corp_sfx = re.compile(r"\b(?!llc\b|l l c\b)(?:inc|incorporated|corp|corporation|co|company|companies|ltd|bank|credit union|plc|na|bros|brothers|industries|products|foods)\b")
+    for ein, name, assets, bmf_name, a1, zip5, fcity, fstate, website in funders:
         best = None
         for nm in dict.fromkeys(n for n in (name, bmf_name) if n):
+            # "TR UA FIFTH THIRD FOUNDATION", "TEXTRON CHARITABLE TRUST DTD 122353": a company foundation held in trust
+            nm = re.sub(r"^\s*(?:tr|trust)\s+u\s?[aw]\s+", "", re.sub(r"\s+(?:dtd|u\s?a|uad)\s+\d.*$", "", nm, flags=re.I), flags=re.I)
             n = norm(nm)
             corp = bool(CORP_WORD.search(n))
-            if TRUSTEE.search(n) and not corp: continue   # "X TR UW BANK OF AMERICA NA", testamentary trusts
+            held = re.search(r" (?:charitable|foundation|giving|educational) trust$", n) and not TRUSTEE.search(n[:n.rindex(" trust")])
+            if TRUSTEE.search(n) and not corp and not held: continue   # "X TR UW BANK OF AMERICA NA", testamentary trusts
             st = fstem(nm)
+            listed, lkey = lookup(tick, st)
             if re.search(r"\b(?:hospitals?|church|school|university|college|museum|clinic|botanic|garden|zoo|library|ymca|society)\b", st) \
-               or re.search(r"\b(?:medical|health)\b", st) and not tick.get(st): continue   # a hospital's or school's own foundation
-            if len(st) < 2 or (len(st) == 2 and not re.search(r"\d", st)) or st in GENERIC or re.search(r"\b(?:family|memorial|hospital|ymca|church|school)\b", st) or re.search(r"\bmemorial\b", n): continue
+               or re.search(r"\b(?:medical|health)\b", st) and not listed: continue   # a hospital's or school's own foundation
+            # A generic stem only counts with a corporate name and the listed company's headquarters ("Southern Company Charitable Foundation")
+            generic = st in GENERIC
+            if generic and not (corp and tick.get(st)): continue
+            if len(st) < 2 or (len(st) == 2 and not re.search(r"\d", st) and not tick.get(st)) or re.search(r"\b(?:family|memorial|hospital|ymca|church|school)\b", st) or re.search(r"\bmemorial\b", n): continue
             pl, fam = person_like(st, first), st in FAMILY or st.split()[-1] in FAMILY and re.match(r"^[a-z]{1,2} ", st) is not None   # "wk kellogg"
             # Funded by the namesake's own trusts or estate ("WK KELLOGG FOUNDATION TRUST"): a family foundation
             # whose name a company happens to share. Only a matching company contributor can flag it.
@@ -321,33 +424,75 @@ def score(dry=False):
                           and (re.search(r"\b(?:family|estate|revocable|living trust)\b", norm(c[0]))
                                or (not NOT_COMPANY.search(norm(c[0])) and person_like(cstem(c[0]), first))))
             namesake = namesake or (noncorp > 0 and noncorp >= 0.5 * sum(max(c[3], 0) for c in cl))
-            listed, edgar = tick.get(st) or (tick.get("$" + st) if " " not in st else None), full.get(st)   # "$ups": ticker UPS
+            edgar, ekey = lookup(full, st)
+            # "Comcast NBCUniversal Foundation": no SEC name, but its first word is a listed company's. Good for
+            # street and website evidence only.
+            tok = st.split()[0]
+            prefix = not (listed or edgar) and " " in st and len(tok) >= 4 and tok not in GENERIC and tok not in first \
+                and tok not in FAMILY and tok not in DICT and bool(tick.get(tok))
+            if prefix: listed, lkey = tick[tok], tok
+            listed1, edgar1 = (listed[0] if listed else None), (edgar[0] if edgar else None)
             ev, company = [], None
             for cname, ca1, cz, amt in sorted(contrib.get(ein, []), key=lambda c: -c[3]):
                 cn = norm(cname).replace("national association", "na")
-                if NOT_COMPANY.search(cn) or cn == n or not (BUSINESS.search(cn) or tick.get(cstem(cname))): continue
-                if HOLDING.search(cn) and (all(t in DICT for t in st.split()) or (cstem(cname) != st and VEHICLE.search(cn))): continue   # "Point Reyes Funding LLC", "Beach Road Assets LP"; "Magnetar Capital LLC" -> "Magnetar Capital Foundation" stays
                 cs = cstem(cname)
+                if NOT_COMPANY.search(cn) or cn == n or not (BUSINESS.search(cn) or tick.get(cs)): continue
+                if HOLDING.search(cn) and (all(t in DICT for t in st.split()) or (cs != st and VEHICLE.search(cn))): continue   # "Point Reyes Funding LLC", "Beach Road Assets LP"; "Magnetar Capital LLC" -> "Magnetar Capital Foundation" stays
                 if cs == cstem(nm): continue   # the foundation itself ("SCHOLALATINAE INC")
-                if " " not in st and not re.search(r"\b(?!llc\b|l l c\b)(?:inc|incorporated|corp|corporation|co|company|companies|ltd|bank|credit union|plc|na|bros|brothers|industries|products|foods)\b", cn) \
-                   and not (tick.get(cs) or full.get(cs)) and not (ca1 and a1 and norm(ca1) == norm(a1)):
+                if " " not in st and not corp_sfx.search(cn) and not (tick.get(cs) or full.get(cs)) and not (ca1 and a1 and norm(ca1) == norm(a1)):
                     continue   # one-word name, LLC or group only, nothing else ties it to a business ("Lumiere LLC")
-                if match(st, cs, first) or (st == strip_end(cs, r"(?:bank|savings bank|national bank|na)") and st not in GENERIC) or (len(st) >= 4 and cs.startswith(st) and (tick.get(cs) or full.get(cs)) and not (pl or fam)):   # Citi <- Citigroup, Prudential <- Prudential Insurance
+                cc = core(cs) if (corp_sfx.search(cn) or tick.get(cs)) and not generic else ""   # "Prudential Insurance Company of America" -> prudential
+                same = bool(ca1 and a1 and street_key(ca1) and street_key(ca1) == street_key(a1))
+                if match(st, cs, first) or (cc and cc == st and len(st) >= 4) or (cs and corp_sfx.search(cn) and cs == core(st) and len(cs) >= 3) \
+                   or (same and tick.get(cs) and st.endswith(" " + cs)) or (st == strip_end(cs, r"(?:bank|savings bank|national bank|na)") and st not in GENERIC) or (len(st) >= 4 and cs.startswith(st) and (tick.get(cs) or full.get(cs)) and not (pl or fam)):   # Citi <- Citigroup
                     ev.append("contributor"); company = cname
                     if ca1 and a1 and norm(ca1) == norm(a1) and cz == zip5: ev.append("address")
                     break
-            if corp and (NOT_COMPANY.search(st) or (" " not in st and st in DICT and not (listed or edgar))): corp = False   # "Brooklyn Botanic Garden Corp Trust" is a nonprofit's own corporation
+            if corp and (NOT_COMPANY.search(re.sub(r"\b(?:schwab|fidelity|vanguard)\b", "", st)) and not tick.get(st) or (" " not in st and st in DICT and not (listed or edgar))): corp = False   # "Brooklyn Botanic Garden Corp Trust" is a nonprofit's own corporation
             if corp: ev.append("corp_name")
             if listed or edgar: ev.append("sec")
-            hit = listed or edgar
-            if hit and (listed or " " in st) and not fam:
-                h = hq_match(hit[1], fcity, fstate, sec_addr)
-                if h == "city": ev.append("hq")
-            ok = (corp
-                  or ("contributor" in ev and (not (pl or fam) or bool(listed)))
-                  or ("hq" in ev and not fam and not namesake and (not pl or bool(listed) or "contributor" in ev)))
+            key = lkey if listed else ekey
+            made_up = not key.startswith("$") and coined(key, first) and len(key) >= 4 and singular(key) not in DICT and key not in surnames and key not in cities
+            # A foundation named for its city is a community foundation ("Hartford Foundation for Public Giving").
+            city_named = norm(fcity) in (st, key) or st in STATES
+            hit, h = listed1 or edgar1, None
+            if (listed or edgar) and not fam:
+                cands = (listed or []) + (edgar or [])
+                deep = (bool(listed) or " " in key) and not prefix   # city-level match only for these; street-level for any
+                for e in cands[:4]:
+                    if not e[1]: continue
+                    # City: the first SEC match only (or any listed one), and a short stem needs a large company ("PNC")
+                    city_ok = deep and not city_named and (e is cands[0] or e[3] is not None) \
+                        and (len(key) >= 4 or "contributor" in ev or corp or (e[3] is not None and e[3] < 750))
+                    # Street: a family office (Form D "Gores Group LLC", "Mirabito Holdings") shares its family
+                    # foundation's address, so an unlisted LLC, group or holding company doesn't count
+                    office = e[3] is None and bool(re.search(r"\b(?:llc|l l c|lp|l p|group|enterprises)\b", norm(e[0])) or HOLDING.search(norm(e[0])))
+                    if not city_ok and (office or not (a1 and street_key(a1))): continue
+                    r = hq_match(e[1], fcity, fstate, a1, zip5, sec_addr)
+                    if r == "street" and not office or r in ("street", "city") and city_ok:
+                        hit, h = e, ("street" if r == "street" and not office else "city")
+                        if h == "street": break
+                if h: ev.append("hq")
+                if h == "street": ev.append("street")
+            # A large listed company (top 1,000 by market value) whose name is a made-up word: "Amgen", "Cigna", "Truist"
+            big = [e for e in (listed or []) if e[3] is not None and e[3] < 750 and e[4]] if not prefix else []   # current names only
+            # Or the foundation's whole name is a large listed company's, two words or more: "American Electric Power"
+            if big and (made_up and key in (st, core(st)) or key == st and " " in st and not fam and any(e[4] and cstem(e[0]) == st for e in big)) and not pl and not namesake and not generic \
+               and re.search(r"\b(?:foundation|fund|trust|cares|giving|charitable|charities|philanthropy|philanthropies)\b", n) and not re.search(r"\bcommunit(?:y|ies) (?:foundation|fund|trust)\b", n):
+                ev.append("brand"); hit = hit if h else big[0]
+            if (listed or edgar) and not generic:
+                if a1 and len(key) >= 4 and re.match(ADDR_NAMED.format(re.escape(key)), " ".join(NUMWORD.get(w, w) if i == 0 else w for i, w in enumerate(norm(a1).split()))):
+                    ev.append("addr_name")
+                lab = web_label(website)
+                if lab and (lab == key.replace(" ", "") or any(e[2] and lab == e[2].lower() for e in (listed or [])[:2])):
+                    ev.append("website")
+            ok = (corp and (not generic or h)
+                  or ("contributor" in ev and (not (pl or fam) or bool(listed) or ("address" in ev and bool(tick.get(cstem(company)))))) 
+                  or ("hq" in ev and not generic and not fam and not namesake and (not pl or bool(listed) or "contributor" in ev))
+                  or ("brand" in ev)
+                  or ("website" in ev and not generic and not fam and not namesake and (not pl or bool(listed))))
             if not ok: continue
-            cand = (len(ev), [ein, company or (hit[0] if hit else st), str(hit[1] or "") if hit else "", (listed[2] if listed else "") or "",
+            cand = (len(ev), [ein, company or (hit[0] if hit else st), str(hit[1] or "") if hit else "", (hit[2] if hit and hit[2] else (listed1[2] if listed1 else "")) or "",
                               "{" + ",".join(ev) + "}", st, nm, assets])
             if not best or cand[0] > best[0]: best = cand
         if best: out.append(best[1])
@@ -362,9 +507,12 @@ def score(dry=False):
     psql(f"""BEGIN;
 CREATE TEMP TABLE t (ein text, company text, cik text, ticker text, evidence text, stem text);
 \\copy t FROM '{tmp.name}' WITH (FORMAT csv, DELIMITER E'\\t', QUOTE E'\\x01')
-TRUNCATE company_foundations;
+DELETE FROM company_foundations c WHERE NOT EXISTS (SELECT 1 FROM t WHERE t.ein = c.ein);   -- incremental: no empty table mid-load
 INSERT INTO company_foundations (ein, company, cik, ticker, evidence, stem)
-  SELECT ein, company, nullif(cik, '')::bigint, nullif(ticker, ''), evidence::text[], stem FROM t ON CONFLICT (ein) DO NOTHING;
+  SELECT DISTINCT ON (ein) ein, company, nullif(cik, '')::bigint, nullif(ticker, ''), evidence::text[], stem FROM t
+  ON CONFLICT (ein) DO UPDATE SET company = excluded.company, cik = excluded.cik, ticker = excluded.ticker, evidence = excluded.evidence, stem = excluded.stem
+  WHERE (company_foundations.company, company_foundations.cik, company_foundations.ticker, company_foundations.evidence, company_foundations.stem)
+        IS DISTINCT FROM (excluded.company, excluded.cik, excluded.ticker, excluded.evidence, excluded.stem);
 COMMIT;""")
     os.unlink(tmp.name)
 

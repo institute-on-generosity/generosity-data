@@ -1,7 +1,7 @@
 # Research layer: data dictionary
 
 Pre-aggregated foundation-grant facts and lookups behind NomBot's research answers (`web/lib/answer.ts`).
-Migrations **038** (bands, profiles), **039** (cause taxonomy), **040** (cubes, refresh function), **041-042** (Schedule I grants by charities), **043** (Census ACS by county), **044** (federal awards to nonprofits), **045** (company foundations), **046** (grant-size histograms for medians and percentiles).
+Migrations **038** (bands, profiles), **039** (cause taxonomy), **040** (cubes, refresh function), **041-042** (Schedule I grants by charities), **043** (Census ACS by county), **044** (federal awards to nonprofits), **045** (company foundations), **046** (grant-size histograms for medians and percentiles), **048** (Schedule I coverage per return).
 All of it is built from `grant_clean` (migration 033), so it holds the **same grants with the same exclusions**: sums match `grant_clean` exactly (NomBot `web/eval/answer-cube.mts` answers 51 questions both ways and compares).
 
 **Refresh:** `SELECT refresh_research_layer();` (last step of `db/refresh.sql`, ~40 s, `CONCURRENTLY`, so readers keep the old rows). Run it after `grant_clean`, `flag_latest`, `org_labels` or `county_need` change. The 046 histograms are refreshed last and add the most time (first build of all three: 9 min 51 s, Oct 17, machine under load).
@@ -88,9 +88,24 @@ One row per recipient EIN, tax year, recipient state and county (a recipient's g
 
 Grants that **public charities** report on Form 990 **Schedule I Part II** (grants over $5,000 to US organizations and governments): donor-advised fund sponsors, community foundations, United Ways, universities, hospitals, federations. Loaded by `etl/load_charity_grants.py` from the same IRS e-file batches as the 990-PF grants (processing years 2023-2026; `YEAR=2023 TYPES=990 etl/fetch_990_xml.sh` extracts a year's Form 990s). Kept apart from `grants`, so foundation answers don't change. Grants to individuals (Part III) are not loaded.
 
-**Coverage (Oct 17, 2026, with IRS batch 05B):** 305,998 returns with a Schedule I from 113,774 filers · 3,413,787 grant lines · $673B (tax years 2019-2025; 2022: 882,831 lines $166.5B, 2023: 953,739 $188.3B, 2024: 1,021,403 $208.2B, 2025 partial: 127,643 $10.1B). **Linked to an org: 83.8% of lines, 84.5% of dollars** (2,764,430 by the reported EIN, then name matcher: 56,863 exact, 1,487 exact-city, 39,102 fuzzy). 94.5% of lines carry a recipient EIN.
+**Coverage (Oct 17, 2026, with IRS batch 05B):** 305,998 returns with a Schedule I from 113,774 filers · 3,413,866 grant lines · $673B (tax years 2019-2025; 2022: 882,905 lines $166.5B, 2023: 953,741 $188.3B, 2024: 1,021,405 $208.2B, 2025 partial: 127,643 $10.1B). **Linked to an org: 83.8% of lines, 84.5% of dollars** (2,764,491 by the reported EIN, then name matcher: 56,863 exact, 1,487 exact-city, 39,104 fuzzy). 94.5% of lines carry a recipient EIN.
 
-**Checked against filers' own totals** (Schedule I sum vs Part IX line 1, grants to domestic organizations): Fidelity Charitable 2024 $15.07B vs $15.23B, 2023 $12.51B vs $12.62B, Schwab Charitable 2024 $8.62B vs $8.76B, National Philanthropic Trust 2024 $5.99B vs $6.11B, Silicon Valley Community Foundation 2024 $3.16B vs $3.16B (2022: $2.06B vs $3.63B, part of that year's list is missing from the e-file).
+**Checked against filers' own totals** (Schedule I sum vs Part IX line 1, grants to domestic organizations): Fidelity Charitable 2024 $15.07B vs $15.23B, 2023 $12.51B vs $12.62B, Schwab Charitable 2024 $8.62B vs $8.76B, National Philanthropic Trust 2024 $5.99B vs $6.11B, Silicon Valley Community Foundation 2024 $3.16B vs $3.16B.
+
+**Schedule I coverage (migration 048, Oct 17):** named Schedule I dollars cover **92.9% of Part IX line 1** in tax years 2022-24 ($545.2B of $586.7B, each return capped at its line 1); 2022 91.7%, 2023 93.2%, 2024 93.7%. The shortfall is almost all in the e-files themselves, not the loader: each return's `coverage_note` says why (2022-25 returns with line 1 above 0):
+
+| `coverage_note` | Returns | Line 1 · gap to named Schedule I $ | What it means |
+|---|---|---|---|
+| `itemized` | 113,104 | $519.8B · $5.8B | Named lines cover 90%+ of line 1 |
+| `not_itemized` | 35,704 | $45.3B · $15.6B | Rows match the return's own recipient count, but sum short. **Silicon Valley Community Foundation 2022**: 3,580 lines (= its 3,575 + 5 count) sum to $2.06B vs $3.63B on line 1; no amended return in the IRS index, the GivingTuesday copy is byte-identical, no supplemental note. Good360 2022 ($1.09B vs $2.55B), Morgan Stanley GIFT 2024, Duke 2021 alike |
+| `see_attached` | 1,726 | $14.4B · $14.2B | One "SEE ATTACHED" / "VARIOUS" line carries the money; the list is in a PDF, not the e-file (Bank of America Charitable Gift Fund 2022-24, Renaissance Charitable, Donors Fund, Greater Horizons, Greater Kansas City CF) |
+| `list_incomplete` | 3,344 | $12.2B · $4.6B | The e-file lists fewer recipients than its own count (Omaha Community Foundation 2024: 8 of 863; Blackbaud Giving Fund 2024: 1,860 of 2,063) |
+| `none_itemized` | 18,572 | $2.3B · $2.3B | Schedule I lists no recipients (mostly small filers) |
+| `exceeds_total` | 1,261 | $3.5B · ~0 | Schedule I sum over 110% of line 1 (grants line 1 puts elsewhere, or a filing error) |
+
+**Loader fixes (Oct 17):** a line with no `RecipientBusinessName` now takes the name from `AddressLine1Txt` ("INNER CITY HEALTH CENTER-3800 YORK" → "INNER CITY HEALTH CENTER"): 79 lines, $16M in 16 returns, reloaded with `--add` (which now also reloads a return already loaded). Lines with only an amount (11,018 lines, $273M; often the return's own total, e.g. Greater Horizons 2024 lists its $212M total as a line) are still skipped. Checked and not a cause: multiple or repeated `IRS990ScheduleI` (none), foreign or noncash-only lines (loaded), missing EIN (loaded and name-matched).
+
+**Placeholder lines still count as grants:** 2,818 lines, $14.9B (`is_placeholder_recipient()`); $11.3B of them (2.0% of dollars) sit in `charity_grant_clean` as unidentified recipients at the filer's own address.
 
 | Caveat | What it means |
 |---|---|
@@ -99,13 +114,14 @@ Grants that **public charities** report on Form 990 **Schedule I Part II** (gran
 | **Double counting** | Grants to another DAF sponsor, community foundation or United Way (`to_grantmaker`, 57,832 lines, $36.4B in 2022-25) are left out of answers: that money is counted when it's granted again. |
 | **In-kind** | `amount` = cash + non-cash. Food banks (Feeding America) and donated-goods charities (Good360) report large in-kind grants. |
 | **Threshold** | Schedule I lists grants over $5,000 per recipient. Smaller grants are only in Part IX totals. |
+| **Not all itemized** | Some filers list only part of their grants (see coverage above). Use `charity_filers.coverage` / `coverage_note` to say so for a named filer. |
 | **Place** | The recipient address on Schedule I, usually a headquarters (same DC effect as 990-PF grants). |
 
 ### `charity_filers` (305,998 rows): one row per Form 990 with a Schedule I
 
-`object_id` (PK), `ein`, `tax_year`, `name`, `city`, `state`, `holds_dafs` (Part IV line 6), `daf_count`, `daf_contributions`, `daf_grants`, `daf_value` (Schedule D Part I, DAF column), `grants_domestic` (Part IX line 1), `sched_i_rows`, `sched_i_usd`. Newest return per filer and tax period.
+`object_id` (PK), `ein`, `tax_year`, `name`, `city`, `state`, `holds_dafs` (Part IV line 6), `daf_count`, `daf_contributions`, `daf_grants`, `daf_value` (Schedule D Part I, DAF column), `grants_domestic` (Part IX line 1), `sched_i_rows`, `sched_i_usd`. Newest return per filer and tax period. Migration 048: `declared_orgs` (Schedule I Part I lines 2 + 3, the filer's own recipient count; NULL when not filed), `placeholder_usd` (dollars on lines naming no recipient), `coverage` ((`sched_i_usd` - `placeholder_usd`) / `grants_domestic`, generated) and `coverage_note` (generated, table above).
 
-### `charity_grants` (3,413,787 rows): one row per Schedule I line
+### `charity_grants` (3,413,866 rows): one row per Schedule I line
 
 | Column | Meaning |
 |---|---|
@@ -153,7 +169,7 @@ American Community Survey **5-year estimates, 2020-2024** (the newest release), 
 
 Federal **grants and cooperative agreements** (assistance types 02 block, 03 formula, 04 project, 05 cooperative agreement) to recipients USAspending.gov tags as **nonprofit** (with or without 501(c)(3)) or **private college**, with no government or public-college tag. **Federal fiscal years 2022-2025** (October to September; FY2025 is complete). Loaded by `etl/load_federal_awards.py` from the USAspending award data archive (`FY<yyyy>_All_Assistance_Full_20261006.zip`, ~1.3-1.6 GB each, in `data/gov/usaspending/`, git-ignored). Transactions are summed per award and fiscal year.
 
-**Coverage (Oct 17, 2026):** 408,462 award-years, $272.0B net obligations (FY2022 101,775 · $56.8B, FY2023 102,793 · $64.1B, FY2024 108,991 · $90.3B, FY2025 94,903 · $60.8B). FY2024 includes $20B of EPA Greenhouse Gas Reduction Fund awards to Climate United, Coalition for Green Capital, Power Forward, Opportunity Finance Network, Inclusiv and Justice Climate Fund. 34 awarding agencies, 1,445 assistance listings. **Linked to an org (name + state + city, `etl/org_matcher.py`): 80.6% of award-years, 83.7% of dollars**, 23,557 distinct EINs (exact 278,353, fuzzy 49,704, exact-city 1,147). Spot-check of 14 random links: all right.
+**Coverage (Oct 17, 2026):** 408,462 award-years, $272.0B net obligations (FY2022 101,775 · $56.8B, FY2023 102,793 · $64.1B, FY2024 108,991 · $90.3B, FY2025 94,903 · $60.8B). FY2024 includes $20B of EPA Greenhouse Gas Reduction Fund awards to Climate United, Coalition for Green Capital, Power Forward, Opportunity Finance Network, Inclusiv and Justice Climate Fund. 34 awarding agencies, 1,445 assistance listings. **Linked to an org (name + state + city, `etl/org_matcher.py`): 80.6% of award-years, 83.7% of dollars**, 23,557 distinct EINs (exact 278,353, fuzzy 49,704, exact-city 1,147). Spot-check of 14 random links: all right. **Round 2 (Oct 17, `etl/relink_federal.py`): 85.5% of award-years, 88.4% of dollars, 24,214 EINs**: `uei` 19,928 award-years (EIN from the Federal Audit Clearinghouse UEI crosswalk `fac_uei_ein`), `uei-stub` 25,511 (moved off zero-revenue duplicate EINs, e.g. Johns Hopkins), `abbrev` 87.
 
 | Column | Meaning |
 |---|---|
@@ -173,7 +189,7 @@ Federal **grants and cooperative agreements** (assistance types 02 block, 03 for
 | **Not the same as 990 government grants** | Form 990 line 1e counts federal, state and local grants together, including federal money passed through states. USAspending has only direct (prime) federal awards. For Ohio's 393 linked recipients with a 2024 Form 990, FY2024 federal awards were $1.2B against $17.2B reported on line 1e. |
 | **Left out** | Contracts, loans, direct payments, subawards, grants to governments and public universities, and USAID's "Miscellaneous Foreign Awardees" aggregate line (1,057 rows). |
 | **Fiscal years** | Federal fiscal years, not the tax years of the 990 sources. |
-| **No EIN** | USAspending carries a UEI, not an EIN, so links are by name and place. Causes (NTEE, labels) cover linked recipients only. |
+| **No EIN** | USAspending carries a UEI, not an EIN. Links are by name and place, then by UEI through single-audit filings (`fac_uei_ein`), which only cover recipients spending $750K or more of federal money a year ($1M from fiscal years starting Oct 2024). Causes (NTEE, labels) cover linked recipients only. |
 
 NomBot source `federal_awards` reads this table directly (`federal_awards fa LEFT JOIN orgs o`): totals and trends, states and counties by place of performance (per resident or per person in poverty), agencies (`top_funders`), programs, recipients, award sizes and ACS county groups. Totals carry the 990 line 1e comparison for the same linked recipients.
 
@@ -191,23 +207,29 @@ NomBot source `federal_awards` reads this table directly (`federal_awards fa LEF
 
 ## Company foundations (migration 045)
 
-The IRS doesn't flag company (corporate) foundations, and NTEE T21 is unreliable (it codes the Ford Foundation as corporate). `etl/load_company_foundations.py` builds the flag from evidence on each foundation's own 990-PF plus the free SEC EDGAR name lists (`company_tickers.json`, `cik-lookup-data.txt`, company addresses from `data.sec.gov/submissions`, cached in `data/sec/`).
+The IRS doesn't flag company (corporate) foundations, and NTEE T21 is unreliable (it codes the Ford Foundation as corporate). `etl/load_company_foundations.py` builds the flag from evidence on each foundation's own 990-PF (name, address, website, Schedule B) plus the free SEC EDGAR name lists (`company_tickers.json`, ordered by market value; `cik-lookup-data.txt`; addresses and current and former names from `data.sec.gov/submissions` for the 1,500 largest listed companies and every matched filer, cached in `data/sec/`). No model calls.
 
-**Refresh:** re-run `python3 etl/load_company_foundations.py` after new 990-PF batches load (`--no-xml` rescores from the tables already loaded). Plain tables: no materialized view depends on them, and `refresh_research_layer()` doesn't touch them.
+**Refresh:** re-run `python3 etl/load_company_foundations.py` after new 990-PF batches load (`--no-xml` rescores from the tables already loaded; rows are upserted and dropped flags deleted, so the table is never empty mid-load). Plain tables: no materialized view depends on them, and `refresh_research_layer()` doesn't touch them.
 
-**Coverage (Oct 17, 2026):** **1,446 foundations** flagged, $27.5B in assets. Their grants: 483,845 lines, **$9.03B in tax years 2022-2024, 4.0% of `grant_clean` dollars** (1,280 foundations with grants).
+**Coverage (Oct 17, 2026, recall pass):** **1,624 foundations** flagged (was 1,446), $33.4B in assets (was $27.5B). Their grants: 615,160 lines, **$10.49B in tax years 2022-2024, 4.7% of `grant_clean` dollars** (was $9.03B, 4.0%; 1,421 foundations with grants).
 
 | Evidence (`evidence` array) | Meaning | Foundations |
 |---|---|---|
 | `contributor` | A Schedule B business contributor carries the foundation's name stem ("Walmart Inc." → Wal-Mart Foundation, "JPMorgan Chase Bank NA" → JPMorgan Chase Foundation). Not a trust, estate, DAF, family vehicle or nonprofit | 1,053 |
 | `corp_name` | The name itself says company ("Boeing Company Charitable Trust", "Illumina Corporate Foundation") | 218 |
-| `sec` | The name stem is an SEC EDGAR company (or ticker, e.g. UPS) | 675 |
-| `hq` | The foundation's city and state are that SEC company's business or mailing address | 463 |
-| `address` | The matching contributor shares the foundation's street address | 445 |
+| `sec` | The name stem is an SEC EDGAR company: its name, a current or former EDGAR name ("Walgreen Co"), the name without industry words ("Truist Financial" → Truist, "Cigna Group", "Prudential Insurance"), the singular ("Walgreens" → Walgreen), or a ticker (UPS) | 965 |
+| `hq` | The foundation's city and state are that SEC company's business or mailing address (first SEC match or a listed one; a stem of 3 letters or fewer needs a top-750 company, e.g. PNC; not when the stem is the foundation's own city or a state) | 637 |
+| `street` | Stronger `hq`: the foundation's house number and street (same ZIP or city) are the company's ("1 Nationwide Plaza", "108 Wilmot Rd"). An unlisted LLC, group, holding or enterprises filer doesn't count: family offices house their family's foundation | 471 |
+| `brand` | The name stem is a made-up word that is a top-750 listed company's current name (by market value): Amgen, Cigna, Truist, Accenture. Not a dictionary word, first name, board-member surname (10+ boards: Pearson, Eaton, Waters) or filer city (Fairfax). Or the whole stem is a two-plus-word listed name ("American Electric Power"). The name must have a foundation word and no "community foundation" | 150 |
+| `website` | The foundation's website is the company's .com site (`cigna.com/...`, `nationwide.com/...`, `ge.com/foundation`): the site name equals the matched SEC stem or the ticker | 136 |
+| `addr_name` | The foundation's street is named for the company ("One Amgen Center Drive"). Recorded only; never flags on its own | 17 |
+| `address` | The matching contributor shares the foundation's street address | 451 |
 
-**Rule:** flagged with `corp_name`, or `contributor`, or `sec` + `hq`. A stem that reads as a person's name (first names from board members and a name list, initials like "W K") needs a listed company behind it. Namesake-family foundations fail on evidence: their stems are people's names, and their Schedule B donors are the family's trusts and estates ("WK Kellogg Foundation Trust", "Lukas T Walton" → not flagged). A short surname list backs this up. Bank-trustee names ("SMITH TR UW BANK OF AMERICA NA") never match.
+**Rule:** flagged with `corp_name`, or `contributor`, or `sec` + `hq` (city or street), or `brand`, or `sec` + `website`. A contributor also matches when the foundation stem minus industry words equals it ("IBM International" ← IBM Corporation), or when the foundation stem ends with a listed contributor at the same street ("John Deere" ← Deere & Company). A foundation "held in trust" ("Textron Charitable Trust", "TR UA Fifth Third Foundation") is scored like a foundation. A stem whose first word is a listed made-up name ("Comcast NBCUniversal") counts for `street` and `website` only. A stem that reads as a person's name (first names from board members and a name list, initials like "W K") needs a listed company behind it. Namesake-family foundations fail on evidence: their stems are people's names, and their Schedule B donors are the family's trusts and estates ("WK Kellogg Foundation Trust", "Lukas T Walton" → not flagged). A short surname list backs this up. Bank-trustee names ("SMITH TR UW BANK OF AMERICA NA") never match.
 
 **Hand checks (Oct 17):** precision **49 of 50** on a random sample of flagged foundations (the miss: a Chinese benevolent "company"). Recall **42 of 49** known corporate foundations (missed: Cigna Group, Nationwide, Prudential, GE Aerospace, Truist, Amgen, Walgreens: no Schedule B match and the SEC name or address differs). Google Foundation and Bank of America Charitable Foundation file no 990-PF in our data.
+
+**Recall pass (Oct 17, later):** the rules above from `street` down, plus the contributor, trust and prefix cases. Those 7 misses are now flagged (49 of 49). On a wider list of **102 well-known company foundations** (banks, insurers, pharma, retail, tech, telecom, energy, autos, industrials) recall went **75 → 99**. Still missed: KeyBank (EDGAR's KeyBank address isn't its Cleveland office; KeyCorp's name differs), Adobe (dictionary word, foundation at Foundation Source in Wilmington), Progressive (PO box in Cleveland, company in Mayfield Village). Precision on a fresh random sample of 50 flagged: **49 of 50** (doubtful: Project Lightwell Foundation, funded by Project Lightwell LLC, maybe a family vehicle; COR Companies Charitable Trust is a company foundation but its `company` column points to Cencora, ticker COR). Doubtful among the 182 new flags, by hand: about 7 (Microsoft Charitable Trust, Knox, Sirius Fund, Dart, Bearing Fruit, Southshore, GBT). Lost from the old set: East West Foundation (city match to East West Enterprises LLC, a family office). Patient-assistance foundations (Merck, AbbVie, Bristol-Myers Squibb) are company-run and flagged; their in-kind drug grants are large.
 
 | Caveat | What it means |
 |---|---|
@@ -215,7 +237,7 @@ The IRS doesn't flag company (corporate) foundations, and NTEE T21 is unreliable
 | **Not corporate giving** | Giving programs run inside a company, sponsorships and matching gifts paid by the company aren't 990-PF grants. |
 | **Pass-through** | Many company foundations pay out what the company gives each year, so assets are small next to grants (Wells Fargo Foundation). |
 
-### `company_foundations` (1,446 rows)
+### `company_foundations` (1,624 rows)
 
 `ein` (PK), `company` (contributor or SEC name, else the stem), `cik`, `ticker` (when matched), `evidence` (text[]), `stem` (normalized name stem the match used).
 
