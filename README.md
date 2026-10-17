@@ -56,6 +56,8 @@ A typical 990 fills in **~440** values (median of 254 filings; 990-EZ ~160, 990-
 | Board, policies, audit | VI, XII |
 | Insider deals | IV |
 | Officers and pay | VII |
+| Each grant to an org: who, EIN, amount, purpose | Sch. I |
+| Donor-advised funds held, given, value | Sch. D I |
 | **990-PF · ~20 fields** | |
 | Assets, total giving | I |
 | Invite only, how to apply | XV 2 |
@@ -78,11 +80,11 @@ A typical 990 fills in **~440** values (median of 254 filings; 990-EZ ~160, 990-
 | Sch. A | Charity type, public support test |
 | Sch. B | Donors (blanked in public copies) |
 | Sch. C | Lobbying, political spending |
-| Sch. D | Endowments, donor advised funds★ |
+| Sch. D | Endowments★ |
 | Sch. F | Work abroad |
 | Sch. G | Fundraising events |
 | Sch. H | Hospital community benefit |
-| Sch. I | Grants by community foundations, DAF sponsors★ |
+| Sch. I III | Grants to individuals |
 | Sch. J | Executive pay detail |
 | Sch. L | Insider deals, itemized |
 | Sch. M | Gifts of property, stock |
@@ -331,6 +333,10 @@ python3 etl/load_federal_register.py   # Federal Register rules + notices, incl.
 python3 etl/load_gdelt.py --days=30    # GDELT news on philanthropy + nonprofits (~3 min per 10 days; then run with no flag)
 CONGRESS_API_KEY=... python3 etl/load_congress.py   # current Congress bills (free key: api.congress.gov/sign-up; resumes if cut off)
 python3 etl/load_search_index.py  # optional: all orgs into a local OpenSearch for NomBot's `npm run bench -- --bm25` (~2 min; brew install opensearch)
+for y in 2023 2024; do YEAR=$y TYPES=990 etl/fetch_990_xml.sh; done   # Form 990s for the IRS years only 990-PFs had (Schedule I)
+python3 etl/load_charity_grants.py   # Schedule I grants by charities (DAF sponsors, community foundations ...), linked by EIN then name (~37 min)
+python3 etl/load_acs.py              # Census ACS 5-year 2020-24 by county: poverty, income, age, race (summary files, no key, ~10 s)
+python3 etl/load_federal_awards.py   # USAspending federal grants to nonprofits FY2022-25 (zips in data/gov/usaspending/), linked by name (~9 min)
 psql nombot -f db/refresh.sql      # rebuild the newest-record views, vector index, interlocks after any load (~5 min)
 (cd etl/labels && npm install) && python3 etl/label_causes.py --label climate all   # cause labels (also women_girls); Claude Batch API, ~1 h, see "Cause labels"
 ```
@@ -416,6 +422,9 @@ Weekly Parquet copy of the analyst tables, so teammates query it without access 
 | `org_labels` | `etl/label_causes.py` | One row per (org, label) in the label: `tier` primary / partial, `score` (classifier confidence), `method` (`llm:<model>` or `review:<model>` for the hand-checked top recipients), `evidence` (≤ 25 words), `version`. Climate 2,729 orgs, women and girls 44,117 |
 | `grant_clean`, `grant_totals`, `flag_year` (materialized views) | `grants`, `filing_flag`, `orgs`, `funders`, `zip_regions` | Migration 033, for NomBot research answers (`lib/answer.ts`): `grant_clean` = 990-PF grants 2022–2025 to US orgs with the miner's exclusions (no individuals, placeholders, foreign or private-foundation recipients; unlinked kept), plus recipient NTEE, county, funder state and a `gos` flag (purpose reads general / unrestricted / operating). 4,930,887 rows, 598 MB. `grant_totals` = its sums per tax year and recipient state (all, linked, general support; 224 rows). `flag_year` = one 990/990-EZ per org per tax year (newest filing) with revenue, expenses, contributions, government grants (line 1e), cash, state, NTEE, county (777,193 rows). Refreshed by `db/refresh.sql` |
 | `grant_cube`, `grant_recipient_year`, `grant_county_year`, `recipient_profile`, `funder_profile` (materialized views); `size_bands`, `ntee_codes`, `cause_terms` (tables), `cause_lookup` (view) | `grant_clean`, `flag_latest`, `orgs`, `funders`, `org_labels`, `public_entities`, `county_need` | Migrations 038–040, the **research layer** for NomBot answers. `grant_cube` = grant sums by tax year × recipient state × rural × NTEE (3 chars) × recipient kind × recipient revenue band × funder asset band × funder type × labels (948,897 rows). `grant_recipient_year` = identified recipients by year and address (765,713). `grant_county_year` = by county and NTEE major group (134,555). Profiles: recipient revenue band (1,396,774 orgs), funder asset band and type (138,734). Taxonomy: all 681 NTEE codes + 287 plain-English terms. Same grants as `grant_clean`. Dictionary and caveats: [`docs/research-layer.md`](docs/research-layer.md). Refreshed by `refresh_research_layer()` at the end of `db/refresh.sql` |
+| `charity_filers`, `charity_grants` (tables); `charity_funder_profile`, `charity_grant_clean`, `charity_grant_cube` (materialized views) | IRS Form 990 Schedule I Part II, Schedule D Part I, Part IV, Part IX (`etl/load_charity_grants.py`) | Migrations 041–042: grants by public charities. 285,635 returns from 111,461 filers, 3,166,830 grant lines ($602B, tax years mostly 2021–2025); recipients linked 83.8% of lines, 84.4% of dollars (by reported EIN, then name). Funder class: 469 DAF sponsors, 1,778 community foundations, 856 United Ways, the rest other. Clean view and cube mirror `grant_clean` / `grant_cube`. Dictionary: [`docs/research-layer.md`](docs/research-layer.md) |
+| `county_acs` | [Census ACS 5-year 2020–2024](https://www.census.gov/programs-surveys/acs/data/summary-file.html) table-based summary files (`etl/load_acs.py`) | Migration 043: population, poverty (universe, people below, margin, rate), median household income, under 18, 65+, race and ethnicity counts and share of people of color. 3,144 counties, 51 states, the U.S. Joins `county_need` |
+| `federal_awards` | [USAspending.gov](https://files.usaspending.gov/award_data_archive/) assistance archive (`etl/load_federal_awards.py`) | Migration 044: federal grants and cooperative agreements to nonprofits and private colleges, one row per award and fiscal year (FY2022–2025): agency, assistance listing, recipient (UEI, name, address), place of performance (state, county), net obligations. 408,462 award-years, $272.0B; 80.6% linked to an org by name and place (83.7% of dollars) |
 | `research_questions` | NomBot `/research/ask` | Migration 035: each distinct research question answered in NomBot (question, normalized text unique, router spec, answer headline, status, times asked, first and last asked). No personal data. Feeds Research's Asked questions list |
 | `label_candidates` | `etl/label_causes.py` | Work table: every candidate org per label with its `sources` (ntee, kw_name, kw_text, emb_query, emb_seed) and similarity to the label query and seed centroid. Climate 21,611, women and girls 70,942 |
 | `insights` | `etl/mine_insights.py` | Verified patterns for NomBot's Insights tab: headline, summary, Vega-Lite chart (data inline), method, caveats, sources, the SQL that reproduces it, CSV rows, org EINs, score, `verified`, `stats` (key numbers for the finding page, migration 029) |
@@ -441,6 +450,9 @@ Weekly Parquet copy of the analyst tables, so teammates query it without access 
 - [x] **Research-answer views (migration 033, Oct 16)**: `grant_clean`, `grant_totals`, `flag_year` so NomBot answers aggregate questions in 0.1–1.3 s; totals match the label report ($171.6B linked 2022–24, climate $4.23B any tier)
 - [x] **Research layer (migrations 038–040, Oct 16)**: fact cube, recipient-year and county rollups, size and funder-type profiles, plain-English cause taxonomy over all NTEE codes, `refresh_research_layer()` (concurrent, ~40 s). Sums match `grant_clean` on all 51 NomBot check questions
 - [x] **Search speed (migrations 034, 036, Oct 16)**: `warm_search()` (`pg_prewarm`) keeps the search's indexes in the OS cache; half-precision HNSW index on `filing_latest` (built in ~4 min). NomBot search query (with its code changes): median 1.6 s → 0.6 s, 90th percentile 12.4 s → 1.3 s on the 50-question benchmark
+- [x] **Schedule I grants (migrations 041–042, Oct 17)**: 3,166,830 grants by public charities from 285,635 Form 990s (IRS years 2023–2026); 83.8% of lines linked (EIN first); DAF sponsors, community foundations and United Ways flagged; totals within 2% of filers' Part IX line 1 for Fidelity, Schwab, NPT and SVCF (2024). Fidelity's TY2023 return is missing from the IRS batches
+- [x] **Census ACS 5-year (migration 043, Oct 17)**: 2020–2024 county poverty, income, age, race and ethnicity for all 3,144 counties
+- [x] **Federal awards (migration 044, Oct 17)**: USAspending grants and cooperative agreements to nonprofits, FY2022–2025: 408,462 award-years, $272.0B, 80.6% linked by name and place
 - [x] **Cause labels (migration 032, `etl/label_causes.py`, Oct 16)**: climate (1,305 primary, 1,424 partial) and women and girls (13,602 primary, 30,515 partial), graded on fresh samples; 2 insights
 
 ## Insights

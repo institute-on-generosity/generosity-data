@@ -47,7 +47,7 @@ Also in the brief's **Data sources** tab ([`shared-database-brief.html`](shared-
 | Source | Brings | Access | Status |
 |---|---|---|---|
 | [IRS 990-PF XML: Part XV](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Every foundation grant, how to apply, deadlines | Bulk file | **Connected** |
-| [IRS 990 Schedule I](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Grants by community foundations and DAF sponsors | Bulk file | **Next** |
+| [IRS 990 Schedule I](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Grants by public charities: DAF sponsors, community foundations, United Ways (3.17M grants, 2021-2025; Schedule D DAF totals) | Bulk file | **Connected** |
 | [Philanthropy News Digest](https://philanthropynewsdigest.org) | New grants and programs announced | RSS | Later |
 
 ## Public funding
@@ -56,7 +56,7 @@ Also in the brief's **Data sources** tab ([`shared-database-brief.html`](shared-
 | Source | Brings | Access | Status |
 |---|---|---|---|
 | [IRS 990 XML: Part VIII 1e](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Government grants received | Bulk file | **Connected** |
-| [USAspending API](https://api.usaspending.gov) | Federal grants awarded to nonprofits, this year | API | **Next** |
+| [USAspending award data archive](https://files.usaspending.gov/award_data_archive/) | Federal grants and cooperative agreements to nonprofits, FY2022-2025, by agency, program and place of performance (408,462 award-years) | Bulk file | **Connected** |
 | [Grants.gov API](https://www.grants.gov/api) | Open federal grants to apply for | API | **Next** |
 
 ## Policy and politics
@@ -74,6 +74,7 @@ Also in the brief's **Data sources** tab ([`shared-database-brief.html`](shared-
 | Source | Brings | Access | Status |
 |---|---|---|---|
 | [Census SAIPE + population](https://www.census.gov/data/developers.html) | County poverty, income, population | Bulk file | **Connected** |
+| [Census ACS 5-year](https://www.census.gov/programs-surveys/acs/data/summary-file.html) | County poverty, income, age, race and ethnicity, 2020-2024 | Bulk file | **Connected** |
 | [OpenFEMA API](https://www.fema.gov/about/openfema/api) | Disaster declarations by county, real-time | API | **Next** |
 | [BLS API](https://www.bls.gov/developers/) | County unemployment, monthly | API key | Later |
 | [Eviction Lab](https://evictionlab.org) | Eviction filings by place | Bulk file | Later |
