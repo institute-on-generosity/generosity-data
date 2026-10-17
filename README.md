@@ -133,7 +133,7 @@ flowchart LR
 
 - **Embedded:** mission + programs, 785,772 filings.
 - **Model:** nomic-embed-text-v1.5, local, 512 dimensions. Cloud: OpenAI text-embedding-3-small.
-- **Index:** HNSW cosine on `filing_latest`, the newest filing per org.
+- **Index:** HNSW cosine on `filing_latest`, the newest filing per org; NomBot searches a half-precision copy (`filing_latest_embedding_half_idx`, migration 036, 696 MB vs 1.39 GB) and scores the candidates at full precision.
 - **Model switch:** re-embeds only stale rows, via `embedding_model`.
 - **GrantRadar:** mission → 150 closest grantees → their funders.
 
@@ -438,6 +438,7 @@ Weekly Parquet copy of the analyst tables, so teammates query it without access 
 - [x] **Board interlocks (migrations 018, 027, `etl/load_board.py`)**: 4,859,408 board seats at 679,042 orgs; 511,243 same-state org pairs sharing a board member: 420,614 hidden links (44,816 high confidence), the rest sister orgs or bank trusts; 14,457 pairs where a foundation pays an org it shares board members with (10,042 hidden)
 - [x] **Insights (migration 025, `etl/mine_insights.py`)**: 34 verified patterns in 6 sections for NomBot's Insights tab, refreshed by one command
 - [x] **Research-answer views (migration 033, Oct 16)**: `grant_clean`, `grant_totals`, `flag_year` so NomBot answers aggregate questions in 0.1–1.3 s; totals match the label report ($171.6B linked 2022–24, climate $4.23B any tier)
+- [x] **Search speed (migrations 034, 036, Oct 16)**: `warm_search()` (`pg_prewarm`) keeps the search's indexes in the OS cache; half-precision HNSW index on `filing_latest` (built in ~4 min). NomBot search query (with its code changes): median 1.6 s → 0.6 s, 90th percentile 12.4 s → 1.3 s on the 50-question benchmark
 - [x] **Cause labels (migration 032, `etl/label_causes.py`, Oct 16)**: climate (1,305 primary, 1,424 partial) and women and girls (13,602 primary, 30,515 partial), graded on fresh samples; 2 insights
 
 ## Insights
