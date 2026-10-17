@@ -12,7 +12,13 @@
   python3 etl/label_causes.py --label climate report          # headline dollar answers (data/labels/<label>/report.json)
   python3 etl/label_causes.py --label climate usage           # Claude tokens and cost so far
 
-Labels: climate, women_girls. Pipeline per label:
+  python3 etl/label_causes.py --label substance_use classify --limit 500 --api cli   # on the Claude subscription (claude -p)
+
+--api cli: every Claude step (classify, verify, judge) runs through Claude Code on the Claude subscription instead of
+the API key (etl/labels/claude_cli.mjs: key variables removed from the child env, apiKeySource checked per call, usage
+limits paused on and logged). Same models, prompts and schemas.
+
+Labels: climate, women_girls, substance_use (pilot). Pipeline per label:
   1. candidates (table label_candidates): NTEE codes, keyword rules on name + mission + programs, and embedding
      similarity (nomic 512-dim, filing_latest) to a label query and to the centroid of seed exemplar orgs.
   2. classify: Claude Haiku 5.5 (high effort, Batch API, 15 orgs a call, structured output) reads each candidate's
@@ -35,6 +41,7 @@ Orgs in scope: 501(c)(3) and (c)(4) on the IRS master file. Orgs without an e-fi
 judged on name + NTEE only. Stdlib + psql + node (etl/labels/claude.mjs, embed/embedder.mjs).
 """
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -163,6 +170,67 @@ LABELS = {
                   "300728021", "411685134"],
         "emb_top": 6000,
         "recall_ntee": r"^(P|O|R|E|B|S|Q|L|X)",
+    },
+    "substance_use": {
+        # Pilot (Oct 17): first label screened on the Claude subscription (--api cli); not loaded into org_labels yet.
+        "name": "Substance use and opioid addiction",
+        "approved": False,                  # load() skips it until Hunter approves the pilot
+        "version": "2026-10-17.1",
+        "llm_version": "2026-10-17.1",
+        "primary_min": 0.8, "partial_min": 0.5,   # copied from women_girls; not yet tuned on a grading sample
+        "definition": ("Organizations whose stated work addresses alcohol or drug use and addiction: preventing substance "
+                       "misuse, treating substance use disorders (detox, residential and outpatient treatment, medication "
+                       "for opioid use disorder), recovery support (recovery housing, recovery community centers, peer "
+                       "recovery coaching), overdose prevention and harm reduction (naloxone, syringe services, drug "
+                       "checking), and research, policy and advocacy on addiction and drug policy."),
+        "includes": ("Addiction treatment providers (Hazelden Betty Ford, Phoenix House, Gaudenzia, Odyssey House), "
+                     "recovery residences and sober living homes, recovery community organizations and recovery cafes "
+                     "(Faces & Voices of Recovery), harm-reduction and overdose-prevention groups (National Harm Reduction "
+                     "Coalition), drug-free community coalitions, councils on alcoholism and drug dependence, addiction "
+                     "research and advocacy (Partnership to End Addiction, Drug Policy Alliance), family support for "
+                     "addiction (Al-Anon, Nar-Anon), and addiction medicine societies."),
+        "excludes": ("Tobacco, vaping or nicotine work alone; gambling, eating, gaming or sex addiction; general mental "
+                     "health without substance use named; DUI enforcement and traffic safety without a substance-use "
+                     "program; pharmacies and drug pricing; general homeless, re-entry or youth programs that only list "
+                     "addiction among many needs; 'drug-free' or 'smoke-free' as a facility rule; marijuana legalization "
+                     "or cannabis industry groups."),
+        "mixed_rule": ("primary = substance use (prevention, treatment, recovery or harm reduction) is the main stated "
+                       "purpose (most of the mission/programs). partial = substance use is one explicitly named program "
+                       "or goal among broader work (a community mental health center with an addiction treatment program, "
+                       "a homeless shelter with a recovery program, a re-entry group with substance-use treatment, a "
+                       "behavioral health agency serving 'mental health and substance use'). not = absent, one of a long "
+                       "list of needs, or only implied."),
+        "explicit": ("substance use, substance abuse, addiction, alcohol or alcoholism, drugs or drug abuse, opioids or "
+                     "opiates, overdose, naloxone or Narcan, harm reduction, syringe or needle exchange, detox, sobriety or "
+                     "sober living, recovery from addiction, or a 12-step fellowship. 'Recovery' alone (disaster, "
+                     "economic or mental-health recovery) is not enough"),
+        "name_only": " (except F20, F21 and F22 substance abuse codes)",
+        "extra": ("- Behavioral health agencies whose mission names both mental health and substance use are partial; "
+                  "primary only when addiction is the main named focus.\n"
+                  "- Alcoholics Anonymous intergroups, clubhouses and halls, Al-Anon and Nar-Anon groups are primary. "
+                  "Tobacco-only cessation or vaping prevention is not; youth prevention covering alcohol and drugs as "
+                  "well as tobacco counts.\n"
+                  "- Drug courts and treatment-court programs are primary; a general court, legal aid or re-entry "
+                  "program that lists substance use among several services is partial only if it names a substance-use "
+                  "program.\n"),
+        "strong_ntee": ["F20", "F21", "F22"],
+        "ntee": ["F20", "F21", "F22", "F50"],
+        "ntee_text": [],
+        "name_re": r"(\maddict|\malcohol|\mdrug[- ]free|\mdrug abuse|\msubstance|\mopioid|\mopiate|\moverdose|\mnaloxone|"
+                   r"\mnarcan\M|harm reduction|\msober|\msobriety|\mdetox|\mrecovery (house|home|residen|cafe|communit|center|coach)|"
+                   r"\mAA\M|\malano|\mal-anon|\mnar-anon|\mnarcotics anonymous|12[- ]step|\mtwelve step|\mteen challenge|"
+                   r"\mfentanyl|\mmethadone|\mrehab\M|\mNCADD\M|\mCADCA\M|\mprevention coalition)",
+        "text_re": r"(\maddict|\malcohol|substance (use|abuse|misuse)|\mopioid|\mopiate|\moverdose|\mnaloxone|\mnarcan\M|"
+                   r"harm reduction|syringe (service|exchange|access)|needle exchange|\msober|\msobriety|\mdetox|"
+                   r"\mfentanyl|\mmethadone|buprenorphine|\mSUD\M|\mMOUD\M|drug (abuse|use|addiction|prevention|treatment|court)|"
+                   r"recovery (house|home|residen|support|coach|communit)|12[- ]step|\mtwelve step)",
+        "query": ("Nonprofit organization working on substance use and addiction: alcohol and drug prevention, addiction "
+                  "treatment and detox, opioid use disorder and overdose prevention, harm reduction and naloxone, "
+                  "recovery housing and peer recovery support."),
+        "seeds": ["521736502", "410682405", "521516692", "510516206", "943204958", "231706895", "136217765",
+                  "237013149", "912158547", "943363781", "863191132"],
+        "emb_top": 6000,
+        "recall_ntee": r"^(F|P|E|I|K|L|O|S)",
     },
 }
 
@@ -325,9 +393,11 @@ def verify_path(label):
 def verify(label):
     """Second stage: the verify model re-reads every org the classifier put in the label (any confidence)."""
     L = LABELS[label]
-    res = {r["id"]: r for r in read_jsonl(out_path(label))}
-    done = {r["id"] for r in read_jsonl(verify_path(label))}
-    eins = sorted(e for e, r in res.items() if r["tier"] != "not" and e not in done)
+    res = last_rows(out_path(label))
+    done = last_rows(verify_path(label))
+    # re-verify when the classifier re-read changed text (fingerprints differ)
+    eins = sorted(e for e, r in res.items() if r["tier"] != "not"
+                  and (e not in done or (r.get("fp") and done[e].get("fp") and r["fp"] != done[e]["fp"])))
     print(f"verify {label}: {len(eins)} orgs with {L['verify_model']}")
     rows = []
     for i in range(0, len(eins), 5000):
@@ -337,7 +407,13 @@ def verify(label):
                    L["verify_model"], "low", batch=15, api="batch")
 
 
+# --api cli (CLI_OPTS set in main): every Claude step goes through Claude Code on the subscription, never the API key.
+CLI_OPTS = None
+
+
 def run_claude(mode, label, items, out, model, effort, batch=25, concurrency=8, api="live"):
+    if CLI_OPTS:
+        api, concurrency = "cli", CLI_OPTS["concurrency"]
     d = ddir(label)
     sys_path = os.path.join(d, f"system-{mode}.txt")
     with open(sys_path, "w") as fh:
@@ -345,19 +421,35 @@ def run_claude(mode, label, items, out, model, effort, batch=25, concurrency=8, 
     in_path = out + ".in.jsonl"
     write_jsonl(in_path, items)
     subprocess.run(["node", CLAUDE, "--mode", mode, "--system", sys_path, "--in", in_path, "--out", out,
-                    "--model", model, "--effort", effort, "--batch", str(batch), "--concurrency", str(concurrency), "--api", api],
+                    "--model", model, "--effort", effort, "--batch", str(batch), "--concurrency", str(concurrency), "--api", api]
+                   + (["--max-util", str(CLI_OPTS["max_util"])] if api == "cli" else []),
                    cwd=os.path.dirname(CLAUDE), check=True)
 
 
-def classify(label, limit=None):
+def fp(text):
+    """Fingerprint of the exact text sent to the model (same as claude.mjs): sha256, first 16 hex chars."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def last_rows(path):
+    return {r["id"]: r for r in read_jsonl(path)}  # later rows win (a rerun on changed text appends)
+
+
+def classify(label, limit=None, new_only=False, dry=False):
+    """Classify candidates with no decision yet. new_only: also those whose record text changed since their decision
+    (fingerprint differs); decisions without a fingerprint count as current (run `fingerprint` to backfill)."""
     out = out_path(label)
-    done = {r["id"] for r in read_jsonl(out)}
+    last = last_rows(out)
     rows = org_text(f"SELECT ein FROM label_candidates WHERE label = {lit(label)}")
-    todo = sorted((r for r in rows if r["ein"] not in done), key=lambda r: r["ein"])
+    new = [r for r in rows if r["ein"] not in last]
+    changed = [r for r in rows if new_only and r["ein"] in last and last[r["ein"]].get("fp") not in (None, fp(render(r)))]
+    todo = sorted(new + changed, key=lambda r: r["ein"])
     random.Random(7).shuffle(todo)
     if limit:
         todo = todo[:limit]
-    print(f"classify {label}: {len(rows)} candidates, {len(done)} done, {len(todo)} to send")
+    print(f"classify {label}: {len(rows)} candidates, {len(last)} decided, {len(new)} new, {len(changed)} changed text, {len(todo)} to send")
+    if dry:
+        return len(todo)
     if todo:
         run_claude("classify", label, [{"id": r["ein"], "text": render(r)} for r in todo], out, CLASSIFY_MODEL, CLASSIFY_EFFORT, batch=15, concurrency=16,
                    api="batch" if len(todo) > 2000 else "live")
@@ -430,6 +522,9 @@ def results(label):
 
 def load(label):
     L = LABELS[label]
+    if not L.get("approved", True):
+        print(f"load {label}: skipped, label not approved yet (LABELS['{label}']['approved'])")
+        return
     res = results(label)
     model = "llm:" + (L.get("verify_model") or CLASSIFY_MODEL)
     for e, r in res.items():
@@ -455,6 +550,48 @@ JOIN orgs o USING (ein);
 COMMIT;""")
     print(psql(f"SELECT tier, count(*) FROM org_labels WHERE label = {lit(label)} GROUP BY 1 ORDER BY 1;").strip())
     print("classified:", Counter(r["tier"] for r in res.values()))
+
+
+def fingerprint(label):
+    """Backfill fp on decisions written before fingerprints, from the record text in the database now (no Claude calls).
+    Assumes the text has not changed since the decision; from here on, changes are detected."""
+    for path in (out_path(label),) + ((verify_path(label),) if LABELS[label].get("verify_model") else ()):
+        rows = read_jsonl(path)
+        need = sorted({r["id"] for r in rows if not r.get("fp")})
+        recs = {}
+        for i in range(0, len(need), 5000):
+            recs.update({r["ein"]: r for r in org_text("SELECT ein FROM orgs WHERE ein IN (%s)" % ",".join(lit(e) for e in need[i:i + 5000]))})
+        n = 0
+        for r in rows:
+            if not r.get("fp") and r["id"] in recs:
+                r["fp"] = fp(render(recs[r["id"]]))
+                n += 1
+        if n:
+            write_jsonl(path + ".tmp", rows)
+            os.replace(path + ".tmp", path)
+        print(f"fingerprint {os.path.basename(path)}: {n} backfilled, {len(rows)} rows")
+
+
+def topup(label, dry=False):
+    """After new data lands: rebuild candidates, classify only new or changed orgs, verify, load (approved labels)."""
+    candidates(label)
+    n = classify(label, new_only=True, dry=dry)
+    if dry:
+        return n
+    if LABELS[label].get("verify_model"):
+        verify(label)
+    load(label)
+    return n
+
+
+def regrade(label, tag=None, n_tier=50, n_not=30, n_recall=60):
+    """Quarterly re-grade: a fresh, smaller sample judged like `sample` + `judge` (not recorded; add --record via
+    `summarize` after reading it)."""
+    import datetime
+    d = datetime.date.today()
+    tag = tag or f"q{d.year}q{(d.month - 1) // 3 + 1}"
+    sample(label, tag, n_tier, n_not, n_recall, n_top=0)
+    judge(label, tag)
 
 
 # ---------------------------------------------------------------- grading
@@ -501,7 +638,7 @@ def sample(label, tag, n_tier=100, n_not=60, n_recall=150, n_top=40, seed=None):
             take(pool, k, f"{tier}/{g}")
     top = q(f"""SELECT l.ein FROM org_labels l JOIN grants g ON g.recipient_ein = l.ein
                 WHERE l.label = {lit(label)} AND g.tax_year BETWEEN 2022 AND 2024 AND g.amount > 0 AND g.recipient_kind IS NULL
-                GROUP BY 1 ORDER BY sum(g.amount) DESC LIMIT {n_top * 3}""")
+                GROUP BY 1 ORDER BY sum(g.amount) DESC LIMIT {n_top * 3}""") if n_top else []
     take_top = [r["ein"] for r in top if r["ein"] not in seen][:n_top]
     for e in take_top:
         seen.add(e)
@@ -693,6 +830,15 @@ def usage(label):
     for f in os.listdir(d):
         if f.endswith(".usage.jsonl"):
             for u in read_jsonl(os.path.join(d, f)):
+                if u.get("api") == "cli":  # Claude subscription via claude -p: no API cost; run summaries skipped
+                    if u.get("event"):
+                        continue
+                    m = next((k for k in price if (u.get("model") or "").startswith(k)), u.get("model")) + " cli"
+                    t = tot[m]
+                    t[0] += (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0) + (u.get("cache_creation_input_tokens") or 0)
+                    t[1] += u.get("output_tokens") or 0
+                    t[2] += 1
+                    continue
                 m = next((k for k in price if (u.get("model") or "").startswith(k)), u.get("model")) + (" batch" if u.get("batch") else "")
                 t = tot[m]
                 t[0] += (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0) + (u.get("cache_creation_input_tokens") or 0)
@@ -700,7 +846,7 @@ def usage(label):
                 t[2] += 1
     cost = 0.0
     for m, (i, o, n) in tot.items():
-        p = price.get(m.replace(" batch", ""), (0, 0))
+        p = (0, 0) if m.endswith(" cli") else price.get(m.replace(" batch", ""), (0, 0))
         p = (p[0] / 2, p[1] / 2) if m.endswith(" batch") else p
         c = i / 1e6 * p[0] + o / 1e6 * p[1]
         cost += c
@@ -709,25 +855,39 @@ def usage(label):
 
 
 def main():
+    global CLI_OPTS, JUDGE_MODEL
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True, choices=sorted(LABELS))
-    ap.add_argument("step", choices=["all", "define", "candidates", "classify", "verify", "load", "sample", "sample-top", "dollar-check", "judge", "summarize", "report", "usage"])
+    ap.add_argument("step", choices=["all", "define", "candidates", "classify", "verify", "load", "sample", "sample-top", "dollar-check", "judge", "summarize", "report", "usage", "fingerprint", "topup", "regrade"])
     ap.add_argument("--tag")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--record", action="store_true", help="summarize: store this grade in cause_labels.grading")
+    ap.add_argument("--api", choices=["cli"], help="cli: run Claude steps through Claude Code on the subscription (claude -p)")
+    ap.add_argument("--concurrency", type=int, default=3, help="--api cli: parallel claude -p processes")
+    ap.add_argument("--max-util", type=float, default=0.95, help="--api cli: stop when seven-day utilization reaches this")
+    ap.add_argument("--judge-model", help="judge: model id (default %s)" % JUDGE_MODEL)
+    ap.add_argument("--new-only", action="store_true", help="classify: also re-run orgs whose record text changed")
+    ap.add_argument("--dry", action="store_true", help="topup/classify: count what would be sent, no Claude calls")
+    ap.add_argument("--n-tier", type=int, default=100)
+    ap.add_argument("--n-not", type=int, default=60)
+    ap.add_argument("--n-recall", type=int, default=150)
     a = ap.parse_args()
+    if a.api == "cli":
+        CLI_OPTS = {"concurrency": a.concurrency, "max_util": a.max_util}
+    if a.judge_model:
+        JUDGE_MODEL = a.judge_model
     if a.step in ("all", "define"):
         define(a.label)
     if a.step in ("all", "candidates"):
         candidates(a.label)
     if a.step in ("all", "classify"):
-        classify(a.label, a.limit)
+        classify(a.label, a.limit, a.new_only, a.dry)
     if a.step in ("all", "verify") and LABELS[a.label].get("verify_model"):
         verify(a.label)
     if a.step in ("all", "load"):
         load(a.label)
     if a.step == "sample":
-        sample(a.label, a.tag or sys.exit("--tag"))
+        sample(a.label, a.tag or sys.exit("--tag"), a.n_tier, a.n_not, a.n_recall, n_top=0 if a.api == "cli" else 40)
     if a.step == "sample-top":
         sample_top(a.label, a.tag or sys.exit("--tag"))
     if a.step == "dollar-check":
@@ -740,6 +900,12 @@ def main():
         report(a.label)
     if a.step == "usage":
         usage(a.label)
+    if a.step == "fingerprint":
+        fingerprint(a.label)
+    if a.step == "topup":
+        topup(a.label, a.dry)
+    if a.step == "regrade":
+        regrade(a.label, a.tag)
 
 
 if __name__ == "__main__":

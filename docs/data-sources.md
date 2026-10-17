@@ -134,6 +134,8 @@ Also in the brief's **Data sources** tab ([`shared-database-brief.html`](shared-
 
 Nightly: check each source's file date, load only new records, embed and link them, publish in one transaction, log rows added per source.
 
+**Cause labels renew after each load.** `etl/after_load.sh` (after BMF, 990 text/flag, recovered XML, `load_grants.py --add`, `load_charity_grants.py --add`): embed new filings, `db/refresh.sql`, then per label `etl/label_causes.py topup --api cli` (Claude Code on the Claude subscription, never the API key; only orgs with no decision or changed text, by fingerprint), load approved labels into `org_labels`, then `refresh_research_layer()` and `mine_insights.py`. Quarterly: `--label <label> regrade --api cli` (not scheduled). Details: README "Cause labels".
+
 **IRS e-file gaps.** The IRS index names one batch per month, but a month can ship in two zips (2025 and 2026 "05A" rows sit in 05A and 05B; 05B is never named), and some zips have a damaged central directory. After each fetch, run `python3 etl/recover_missing_xml.py` (`--dry-run` to report only). Per year it:
 1. **Zips:** reports zips `unzip` flags as damaged.
 2. **Batches:** probes the IRS server for the next letters after each month's last zip (05A → 05B, 05C ...) and fetches any it finds with `etl/fetch_990_xml.sh`.

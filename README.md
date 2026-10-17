@@ -341,6 +341,7 @@ python3 etl/recover_missing_xml.py  # fill index rows with no file: unnamed IRS 
 python3 etl/load_grants.py --add data/xml/recovered/2025pf; python3 etl/load_charity_grants.py --add data/xml/recovered/2025   # load just those (incremental)
 psql nombot -f db/refresh.sql      # rebuild the newest-record views, vector index, interlocks after any load (~5 min)
 (cd etl/labels && npm install) && python3 etl/label_causes.py --label climate all   # cause labels (also women_girls); Claude Batch API, ~1 h, see "Cause labels"
+etl/after_load.sh                  # after any load that adds or changes orgs or 990 text (BMF, 990 text/flag, recovered XML, grants --add): embed, refresh.sql, label top-up on the Claude subscription, research layer, insights
 ```
 
 No Python packages needed (stdlib + `psql`; cause labels call Claude from Node in `etl/labels/`), except the optional GPU embedder (`.venv`: torch, sentence-transformers) and the analytics tools (`.venv-analytics`: Splink, igraph, BERTopic, DuckDB, dbt).
@@ -428,7 +429,7 @@ Weekly Parquet copy of the analyst tables, so teammates query it without access 
 | `county_acs` | [Census ACS 5-year 2020–2024](https://www.census.gov/programs-surveys/acs/data/summary-file.html) table-based summary files (`etl/load_acs.py`) | Migration 043: population, poverty (universe, people below, margin, rate), median household income, under 18, 65+, race and ethnicity counts and share of people of color. 3,144 counties, 51 states, the U.S. Joins `county_need` |
 | `federal_awards` | [USAspending.gov](https://files.usaspending.gov/award_data_archive/) assistance archive (`etl/load_federal_awards.py`) | Migration 044: federal grants and cooperative agreements to nonprofits and private colleges, one row per award and fiscal year (FY2022–2025): agency, assistance listing, recipient (UEI, name, address), place of performance (state, county), net obligations. 408,462 award-years, $272.0B; 80.6% linked to an org by name and place (83.7% of dollars) |
 | `research_questions` | NomBot `/research/ask` | Migration 035: each distinct research question answered in NomBot (question, normalized text unique, router spec, answer headline, status, times asked, first and last asked). No personal data. Feeds Research's Asked questions list |
-| `label_candidates` | `etl/label_causes.py` | Work table: every candidate org per label with its `sources` (ntee, kw_name, kw_text, emb_query, emb_seed) and similarity to the label query and seed centroid. Climate 21,611, women and girls 70,942 |
+| `label_candidates` | `etl/label_causes.py` | Work table: every candidate org per label with its `sources` (ntee, kw_name, kw_text, emb_query, emb_seed) and similarity to the label query and seed centroid. Climate 22,154, women and girls 72,481, substance use 22,713 (pilot) |
 | `insights` | `etl/mine_insights.py` | Verified patterns for NomBot's Insights tab: headline, summary, Vega-Lite chart (data inline), method, caveats, sources, the SQL that reproduces it, CSV rows, org EINs, score, `verified`, `stats` (key numbers for the finding page, migration 029) |
 
 ## Status
@@ -457,6 +458,9 @@ Weekly Parquet copy of the analyst tables, so teammates query it without access 
 - [x] **Census ACS 5-year (migration 043, Oct 17)**: 2020–2024 county poverty, income, age, race and ethnicity for all 3,144 counties
 - [x] **Federal awards (migration 044, Oct 17)**: USAspending grants and cooperative agreements to nonprofits, FY2022–2025: 408,462 award-years, $272.0B, 80.6% linked by name and place
 - [x] **Cause labels (migration 032, `etl/label_causes.py`, Oct 16)**: climate (1,305 primary, 1,424 partial) and women and girls (13,602 primary, 30,515 partial), graded on fresh samples; 2 insights
+- [x] **Labels on the Claude subscription + auto top-up (Oct 17)**: `--api cli` (`claude -p`), fingerprints, `topup`, `etl/after_load.sh`, `regrade`; substance-use pilot (500 orgs, not loaded)
+- [ ] Substance-use label: prompt fix for name-only F20–F22 records, fresh grade, approve and load
+- [ ] Run the pending climate + women-and-girls top-up (3,305 orgs, ~35 min on the subscription)
 
 ## Insights
 
@@ -524,6 +528,15 @@ Denominator: **$171.6B** of linked grant dollars (no individuals, placeholders, 
 - **Limits:** labels describe the recipient, not the grant's purpose; foundation grants only (individual and corporate giving outside foundations isn't visible; tax data covers itemizers only); 56% of grant dollars link to a recipient; 87% of linked dollars go to orgs with 990 mission text, the rest are judged by name.
 - **Cost:** $22.81 of Claude API for both labels, iterations included (Haiku $12.56, Opus judge $6.80, Sonnet $3.44).
 - **UI:** NomBot research answers (Oct 16) use both labels for "how much / what share / top funders" questions, in the answer card, Research Buddy's `research_answer` tool, `GET /api/v1/answer` and MCP (views from migration 033). A NomBot search filter by label isn't built yet.
+
+### Renewal and the Claude subscription (Oct 17)
+
+- **Subscription path:** `--api cli` runs every Claude step through Claude Code (`claude -p`, `etl/labels/claude_cli.mjs`) on the Claude subscription, **not the API key**: same models, prompts and JSON schema, no tools, 3 parallel calls. `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` are removed from each child's env and every call must report `apiKeySource: none`, else the run aborts. Check: `jq -c 'select(.api=="cli") | .apiKeySource' data/labels/<label>/*.usage.jsonl | sort | uniq -c`.
+- **Limits:** each call logs five-hour and seven-day utilization to `<out>.usage.jsonl`; a rejected call pauses all workers until the window resets, then resumes (done ids are skipped). `--max-util` (default 0.95) stops at that share of the seven-day window.
+- **Top-up:** decisions carry a **fingerprint** (`fp`, sha256 of the exact text sent). `--label <label> topup --api cli` rebuilds candidates, classifies only orgs with no decision or changed text (`classify --new-only`), verifies (climate), loads. `--dry` counts only. `fingerprint` backfilled existing decisions from current text (Oct 17), no reruns. Run by `etl/after_load.sh` for climate and women_girls (`LABELS=...` to change).
+- **Pending top-up (Oct 17, after the IRS 05B batches):** climate 1,205 new candidates, women and girls 2,100; 0 changed text.
+- **Quarterly re-grade:** `python3 etl/label_causes.py --label <label> regrade --api cli` (fresh sample of 50 per tier, 30 rejected, 60 non-candidates, Opus judge; not scheduled, not recorded until `summarize --record`).
+- **Substance use and opioid addiction (pilot):** 500 of 22,713 candidates screened on the subscription, ~5,800 orgs/h; primary 41/41, partial 95% in label (sample p1). **Not loaded** (`approved: False`). [`docs/labels/substance_use.md`](docs/labels/substance_use.md).
 
 ## Gotchas
 - 990 XML batches use **Deflate64**: Python's `zipfile` can't read them; `unzip` can.
