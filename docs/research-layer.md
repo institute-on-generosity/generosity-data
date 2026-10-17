@@ -1,10 +1,10 @@
 # Research layer: data dictionary
 
 Pre-aggregated foundation-grant facts and lookups behind NomBot's research answers (`web/lib/answer.ts`).
-Migrations **038** (bands, profiles), **039** (cause taxonomy), **040** (cubes, refresh function), **041-042** (Schedule I grants by charities), **043** (Census ACS by county), **044** (federal awards to nonprofits).
+Migrations **038** (bands, profiles), **039** (cause taxonomy), **040** (cubes, refresh function), **041-042** (Schedule I grants by charities), **043** (Census ACS by county), **044** (federal awards to nonprofits), **045** (company foundations), **046** (grant-size histograms for medians and percentiles).
 All of it is built from `grant_clean` (migration 033), so it holds the **same grants with the same exclusions**: sums match `grant_clean` exactly (NomBot `web/eval/answer-cube.mts` answers 51 questions both ways and compares).
 
-**Refresh:** `SELECT refresh_research_layer();` (last step of `db/refresh.sql`, ~40 s, `CONCURRENTLY`, so readers keep the old rows). Run it after `grant_clean`, `flag_latest`, `org_labels` or `county_need` change.
+**Refresh:** `SELECT refresh_research_layer();` (last step of `db/refresh.sql`, ~40 s, `CONCURRENTLY`, so readers keep the old rows). Run it after `grant_clean`, `flag_latest`, `org_labels` or `county_need` change. The 046 histograms are refreshed last and add the most time (first build of all three: 9 min 51 s, Oct 17, machine under load).
 
 ## Read this first: caveats that apply everywhere
 
@@ -28,7 +28,7 @@ Fixed edges, so a band always means the same dollars. Answers round a requested 
 
 Lower edge inclusive, upper edge exclusive. Negative revenue falls in band 1.
 
-## `recipient_profile` (1,396,774 rows): one row per org with a known revenue
+## `recipient_profile` (1,396,855 rows): one row per org with a known revenue
 
 | Column | Meaning | Caveat |
 |---|---|---|
@@ -38,14 +38,14 @@ Lower edge inclusive, upper edge exclusive. Negative revenue falls in band 1.
 | `revenue_year` | Tax year of the 990 used | NULL when from the master file |
 | `band` | `revenue_band(revenue)` | Orgs with no revenue anywhere (mostly 990-N filers, usually under $50K) are absent: band unknown |
 
-## `funder_profile` (138,734 rows): one row per 990-PF filer
+## `funder_profile` (139,749 rows): one row per 990-PF filer
 
 | Column | Meaning | Caveat |
 |---|---|---|
 | `ein` | Foundation EIN (unique) | |
 | `assets` | Fair market value of assets at year end | Newest 990-PF, not the grant year |
 | `asset_band` | `asset_band(assets)` | |
-| `funder_type` | `family_named` (23,592) · `operating` (7,792) · `trust` (5,443) · `other` (101,907) | The IRS flags neither family nor company foundations. **family_named** = "Family" in the name, a floor (most family foundations carry a person's name). **operating** = master-file foundation code 02/03. **trust** = 4947(a)(1) trust (subsection 92). First match wins in that order. Company foundations can't be identified (NTEE T21 is unreliable: it codes the Ford Foundation as corporate). |
+| `funder_type` | `family_named` (23,592) · `operating` (7,792) · `trust` (5,443) · `other` (101,907) | The IRS flags neither family nor company foundations. **family_named** = "Family" in the name, a floor (most family foundations carry a person's name). **operating** = master-file foundation code 02/03. **trust** = 4947(a)(1) trust (subsection 92). First match wins in that order. Company foundations are a separate flag, `company_foundations` (migration 045), not a `funder_type` value, so the cube is unchanged. |
 
 ## `ntee_codes` (681 rows) and `cause_terms` (287 rows), view `cause_lookup` (890 rows)
 
@@ -55,7 +55,7 @@ Lower edge inclusive, upper edge exclusive. Negative revenue falls in band 1.
 | `cause_terms` | `term`, `ntee` (prefixes), `label` | Curated plain-English cause names ("animal shelters" → D20, "homelessness" → L41 + P85, "climate" → label `climate`). A prefix matches the start of an org's NTEE code. |
 | `cause_lookup` | `term`, `ntee`, `label`, `source` | Curated terms first, then every NTEE code's own name in lowercase. NomBot resolves a cause the router left without a code or label here, before falling back to keyword search. |
 
-## `grant_cube` (948,897 rows): the fact cube
+## `grant_cube` (995,187 rows): the fact cube
 
 One row per combination of the dimensions below. **Additive measures** can be summed over any rows. **Distinct counts are per row only.**
 
@@ -76,11 +76,11 @@ One row per combination of the dimensions below. **Additive measures** can be su
 | `gos_usd`, `gos_n` | additive | Dollars and lines whose purpose reads general / unrestricted / operating | A text rule, a floor |
 | `recipients`, `funders` | per row | Distinct recipient EINs and funder EINs in this row | **Not additive.** For exact counts across rows use `grant_recipient_year` or `grant_clean` |
 
-## `grant_recipient_year` (765,713 rows): identified recipients by year
+## `grant_recipient_year` (803,981 rows): identified recipients by year
 
 One row per recipient EIN, tax year, recipient state and county (a recipient's grants can carry different addresses). Columns: `recipient_ein`, `tax_year`, `recipient_state`, `county_fips`, `rural`, `recipient_ntee` (full code), `recipient_band`, `labels`, `usd`, `n`, `gos_usd`, `funders` (distinct within the row, not additive). Used for exact distinct-recipient counts and concentration (top 1% of recipients). No funder columns: questions filtered by funder size or type use `grant_clean`.
 
-## `grant_county_year` (134,555 rows): county rollup
+## `grant_county_year` (139,214 rows): county rollup
 
 `tax_year`, `county_fips` (NULL = ZIP not mapped), `recipient_state`, `ntee_major` (first letter, NULL = uncoded or unidentified), `linked`, `usd`, `n`. All clean grants, for county rankings and county per-resident figures (population from `county_need`, Census 2024).
 
@@ -88,24 +88,24 @@ One row per recipient EIN, tax year, recipient state and county (a recipient's g
 
 Grants that **public charities** report on Form 990 **Schedule I Part II** (grants over $5,000 to US organizations and governments): donor-advised fund sponsors, community foundations, United Ways, universities, hospitals, federations. Loaded by `etl/load_charity_grants.py` from the same IRS e-file batches as the 990-PF grants (processing years 2023-2026; `YEAR=2023 TYPES=990 etl/fetch_990_xml.sh` extracts a year's Form 990s). Kept apart from `grants`, so foundation answers don't change. Grants to individuals (Part III) are not loaded.
 
-**Coverage (Oct 17, 2026):** 285,635 returns with a Schedule I from 111,461 filers · 3,166,830 grant lines · $602B (tax years 2019-2025; 2022: 882,769 lines $166.3B, 2023: 810,753 $150.3B, 2024: 928,395 $176.8B, 2025 partial: 116,742 $9.1B). **Linked to an org: 83.8% of lines, 84.4% of dollars** (2,562,918 by the reported EIN, then name matcher: 54,546 exact, 1,423 exact-city, 36,202 fuzzy). 94.3% of lines carry a recipient EIN.
+**Coverage (Oct 17, 2026, with IRS batch 05B):** 305,998 returns with a Schedule I from 113,774 filers · 3,413,787 grant lines · $673B (tax years 2019-2025; 2022: 882,831 lines $166.5B, 2023: 953,739 $188.3B, 2024: 1,021,403 $208.2B, 2025 partial: 127,643 $10.1B). **Linked to an org: 83.8% of lines, 84.5% of dollars** (2,764,430 by the reported EIN, then name matcher: 56,863 exact, 1,487 exact-city, 39,102 fuzzy). 94.5% of lines carry a recipient EIN.
 
-**Checked against filers' own totals** (Schedule I sum vs Part IX line 1, grants to domestic organizations): Fidelity Charitable 2024 $15.07B vs $15.23B, Schwab Charitable 2024 $8.62B vs $8.76B, National Philanthropic Trust 2024 $5.99B vs $6.11B, Silicon Valley Community Foundation 2024 $3.16B vs $3.16B (2022: $2.06B vs $3.63B, part of that year's list is missing from the e-file).
+**Checked against filers' own totals** (Schedule I sum vs Part IX line 1, grants to domestic organizations): Fidelity Charitable 2024 $15.07B vs $15.23B, 2023 $12.51B vs $12.62B, Schwab Charitable 2024 $8.62B vs $8.76B, National Philanthropic Trust 2024 $5.99B vs $6.11B, Silicon Valley Community Foundation 2024 $3.16B vs $3.16B (2022: $2.06B vs $3.63B, part of that year's list is missing from the e-file).
 
 | Caveat | What it means |
 |---|---|
 | **Which grants a donor advised** | Schedule I doesn't say. A DAF sponsor's grants are mostly DAF grants (that's how `daf_sponsor` is defined); a community foundation's mix DAF and discretionary grants. Schedule D gives each filer's DAF grant total, not by recipient. |
-| **Missing returns** | Fidelity Charitable's tax year 2023 return (period ending June 2024) is not in the IRS 2025 batches: batch 05A is cut short on the IRS server. 2023 DAF totals run low. |
-| **Double counting** | Grants to another DAF sponsor, community foundation or United Way (`to_grantmaker`, 54,065 lines, $34.0B in 2022-25) are left out of answers: that money is counted when it's granted again. |
+| **Missing returns** | The IRS index files some 2025 and 2026 returns under batch 05A that ship in 05B (Fidelity Charitable's tax year 2023 return among them); `etl/recover_missing_xml.py` finds such batches and fills the gaps, so none of these are missing now. Tax year 2025 is partial: most of those returns aren't filed yet. |
+| **Double counting** | Grants to another DAF sponsor, community foundation or United Way (`to_grantmaker`, 57,832 lines, $36.4B in 2022-25) are left out of answers: that money is counted when it's granted again. |
 | **In-kind** | `amount` = cash + non-cash. Food banks (Feeding America) and donated-goods charities (Good360) report large in-kind grants. |
 | **Threshold** | Schedule I lists grants over $5,000 per recipient. Smaller grants are only in Part IX totals. |
 | **Place** | The recipient address on Schedule I, usually a headquarters (same DC effect as 990-PF grants). |
 
-### `charity_filers` (285,635 rows): one row per Form 990 with a Schedule I
+### `charity_filers` (305,998 rows): one row per Form 990 with a Schedule I
 
 `object_id` (PK), `ein`, `tax_year`, `name`, `city`, `state`, `holds_dafs` (Part IV line 6), `daf_count`, `daf_contributions`, `daf_grants`, `daf_value` (Schedule D Part I, DAF column), `grants_domestic` (Part IX line 1), `sched_i_rows`, `sched_i_usd`. Newest return per filer and tax period.
 
-### `charity_grants` (3,166,830 rows): one row per Schedule I line
+### `charity_grants` (3,413,787 rows): one row per Schedule I line
 
 | Column | Meaning |
 |---|---|
@@ -117,7 +117,7 @@ Grants that **public charities** report on Form 990 **Schedule I Part II** (gran
 | `cash`, `noncash`, `amount` | amount = cash + non-cash |
 | `purpose`, `noncash_desc` | Free text |
 
-### `charity_funder_profile` (111,461 rows): one row per filer
+### `charity_funder_profile` (113,774 rows): one row per filer
 
 `ein`, `name`, `state`, `ntee`, `holds_dafs`, `daf_count`, `daf_value`, `daf_share` (Schedule D DAF grants / Schedule I grants, years with both), `sched_i_usd`, **`funder_class`** (first match wins):
 
@@ -129,7 +129,7 @@ Grants that **public charities** report on Form 990 **Schedule I Part II** (gran
 | `community_foundation` | Otherwise NTEE T31 | |
 | `other` | Every other charity reporting grants | 108,358 · $391.8B |
 
-### `charity_grant_clean` (2,673,218 rows) and `charity_grant_cube` (292,748 rows)
+### `charity_grant_clean` (2,916,071 rows) and `charity_grant_cube` (301,963 rows)
 
 `charity_grant_clean`: tax years 2022-2025, amount above 0, US state, no foreign address, no private-foundation recipients (as `grant_clean`), plus `funder_class`, `funder_state`, `county_fips`, `recipient_ntee`, `gos` (purpose text reads general / operating) and `to_grantmaker`. **Same column names as `grant_clean`**, so the answer engine reads either. `charity_grant_cube`: sums by `tax_year`, `recipient_state`, `rural`, `ntee3`, `linked`, `funder_class`, `to_grantmaker`, `labels`; additive `usd`, `n`, `gos_usd`, `gos_n`. NomBot source `charity_grants` reads the cube for totals, states, causes and funder groups, and `charity_grant_clean` for counties, keyword causes, top funders and recipients. Refreshed by `refresh_research_layer()`.
 
@@ -177,6 +177,52 @@ Federal **grants and cooperative agreements** (assistance types 02 block, 03 for
 
 NomBot source `federal_awards` reads this table directly (`federal_awards fa LEFT JOIN orgs o`): totals and trends, states and counties by place of performance (per resident or per person in poverty), agencies (`top_funders`), programs, recipients, award sizes and ACS county groups. Totals carry the 990 line 1e comparison for the same linked recipients.
 
+## Grant-size histograms (migration 046): medians and percentiles
+
+`grant_size_hist` (3,181,445 rows, 675 MB), `charity_grant_size_hist` (2,229,521 rows, 422 MB), `fed_award_size_hist` (227,582 rows, 36 MB). One row per research-cube cell (the same dimensions as `grant_cube`, `charity_grant_cube`; federal: fiscal year, `pop_state`, rural, `ntee3`, linked, `recipient_band`, `labels`) and **amount bucket**.
+
+| Column | Meaning |
+|---|---|
+| `bucket` | `amount_bucket(amount)`: the amount cut to 3 significant digits ($12,345 → $12,300); under $1,000 stays as is |
+| `exact` | every amount in the row equals `bucket` (a round amount). 92% of foundation grants, 57% of Schedule I lines |
+| `n`, `lo`, `hi` | grants (award-years) in the row, smallest and largest amount. `fed_award_size_hist` also has `usd` (no federal cube for the average) |
+
+**Reading a percentile:** sum `n` by `(bucket, exact)` over the matching cells, order by `bucket, exact DESC` (the amounts' sorted order) and walk the ranks as `percentile_cont` does. A rank in an exact row, or a row's first or last rank, is exact; otherwise it is interpolated between the row's `lo` and `hi`, which bound the true value (under 1% apart). **Checked (Oct 17,** `web/eval/answer-cube.mts`, 35 grant-size specs on the histograms vs `percentile_cont` on the same live data): 92 of 108 medians and 90th percentiles exact, max error 0.16%; shown tiles identical in 106 of 111, the rest marked "about". Answer time (whole answer, loaded machine): median 633 → 282 ms, slowest 4.2 → 1.1 s.
+
+## Company foundations (migration 045)
+
+The IRS doesn't flag company (corporate) foundations, and NTEE T21 is unreliable (it codes the Ford Foundation as corporate). `etl/load_company_foundations.py` builds the flag from evidence on each foundation's own 990-PF plus the free SEC EDGAR name lists (`company_tickers.json`, `cik-lookup-data.txt`, company addresses from `data.sec.gov/submissions`, cached in `data/sec/`).
+
+**Refresh:** re-run `python3 etl/load_company_foundations.py` after new 990-PF batches load (`--no-xml` rescores from the tables already loaded). Plain tables: no materialized view depends on them, and `refresh_research_layer()` doesn't touch them.
+
+**Coverage (Oct 17, 2026):** **1,446 foundations** flagged, $27.5B in assets. Their grants: 483,845 lines, **$9.03B in tax years 2022-2024, 4.0% of `grant_clean` dollars** (1,280 foundations with grants).
+
+| Evidence (`evidence` array) | Meaning | Foundations |
+|---|---|---|
+| `contributor` | A Schedule B business contributor carries the foundation's name stem ("Walmart Inc." → Wal-Mart Foundation, "JPMorgan Chase Bank NA" → JPMorgan Chase Foundation). Not a trust, estate, DAF, family vehicle or nonprofit | 1,053 |
+| `corp_name` | The name itself says company ("Boeing Company Charitable Trust", "Illumina Corporate Foundation") | 218 |
+| `sec` | The name stem is an SEC EDGAR company (or ticker, e.g. UPS) | 675 |
+| `hq` | The foundation's city and state are that SEC company's business or mailing address | 463 |
+| `address` | The matching contributor shares the foundation's street address | 445 |
+
+**Rule:** flagged with `corp_name`, or `contributor`, or `sec` + `hq`. A stem that reads as a person's name (first names from board members and a name list, initials like "W K") needs a listed company behind it. Namesake-family foundations fail on evidence: their stems are people's names, and their Schedule B donors are the family's trusts and estates ("WK Kellogg Foundation Trust", "Lukas T Walton" → not flagged). A short surname list backs this up. Bank-trustee names ("SMITH TR UW BANK OF AMERICA NA") never match.
+
+**Hand checks (Oct 17):** precision **49 of 50** on a random sample of flagged foundations (the miss: a Chinese benevolent "company"). Recall **42 of 49** known corporate foundations (missed: Cigna Group, Nationwide, Prudential, GE Aerospace, Truist, Amgen, Walgreens: no Schedule B match and the SEC name or address differs). Google Foundation and Bank of America Charitable Foundation file no 990-PF in our data.
+
+| Caveat | What it means |
+|---|---|
+| **A floor** | Company foundations whose names don't match the company and that list no company contributor are missed. |
+| **Not corporate giving** | Giving programs run inside a company, sponsorships and matching gifts paid by the company aren't 990-PF grants. |
+| **Pass-through** | Many company foundations pay out what the company gives each year, so assets are small next to grants (Wells Fargo Foundation). |
+
+### `company_foundations` (1,446 rows)
+
+`ein` (PK), `company` (contributor or SEC name, else the stem), `cik`, `ticker` (when matched), `evidence` (text[]), `stem` (normalized name stem the match used).
+
+### `pf_business_contributors` (107,182 rows) and `pf_filer_address` (461,677 rows)
+
+Every business-name contributor on 990-PF Schedule B (`ein`, `object_id`, `tax_year`, `name`, `address1`, `city`, `state`, `zip`, `amount`) across all 461,680 990-PF returns in `data/xml/*pf`, 20,586 foundations. People listed as contributors aren't stored. `pf_filer_address`: the filer's street address on each return.
+
 ## What uses what (NomBot `lib/answer.ts`)
 
 | Question | Source |
@@ -186,7 +232,9 @@ NomBot source `federal_awards` reads this table directly (`federal_awards fa LEF
 | Breakdowns by cause, NTEE code, recipient size, foundation size or type, recipient kind, year | `grant_cube` |
 | Breakdown by county | `grant_county_year` (all causes or NTEE major groups), else `grant_clean` |
 | Concentration | `grant_recipient_year` |
-| Keyword causes, a named county, medians, top funders / recipients, out-of-state, overlap | `grant_clean` (+ profiles for filters) |
+| Median and 90th percentile grant (`grant_size`; label or NTEE cause up to 3 characters, no county) | `grant_size_hist` / `charity_grant_size_hist` / `fed_award_size_hist`, count and average from `grant_cube` / `charity_grant_cube` |
+| Keyword causes, a named county, top funders / recipients, out-of-state, overlap | `grant_clean` (+ profiles for filters) |
+| Company foundations (filter `funderType: company`) | `grant_clean` with `funder_ein IN company_foundations`, never the cube (it has no company column) |
 | Schedule I grants (source `charity_grants`, filter `charityFunder`) | `charity_grant_cube`, else `charity_grant_clean` (+ `charity_funder_profile` for funder names) |
 | Per person in poverty; counties grouped by poverty, income, race/ethnicity, age | `county_acs` with `grant_county_year`, `grant_clean`, `charity_grant_clean` or `flag_year` by county |
 | Federal grants to nonprofits (source `federal_awards`) | `federal_awards` (+ `orgs` for causes, `county_acs` / `county_need` for per-person figures) |

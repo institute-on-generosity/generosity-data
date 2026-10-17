@@ -6,8 +6,9 @@
 # 990-PFs are national, with no orgs filter: foundations anywhere fund groups in the loaded states.
 # Files are picked by listing each zip against the index, so filings the index puts in the wrong
 # batch (or in none) are still found.
-# Note: batches use Deflate64, which Python's zipfile can't read; Info-ZIP unzip can. Some zips are cut
-# short (2025 05A lists 81,770 files, fewer than its index): the missing filings are skipped.
+# Note: batches use Deflate64, which Python's zipfile can't read; Info-ZIP unzip can. The index names one
+# batch a month, but 2025 and 2026 "05A" rows ship in 05A and 05B: run etl/recover_missing_xml.py after this
+# to fetch unnamed batches and fill any other index rows with no file from the GivingTuesday mirror.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DB="${DATABASE_URL:-postgresql:///nombot}"

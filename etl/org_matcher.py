@@ -24,8 +24,9 @@ def _psql(sql, *args):
 def _times(step, out):
     print(f"{step}: " + " · ".join(l.replace("Time: ", "").split(" (")[0] for l in out.splitlines() if l.startswith("Time:")))
 
-def link(table, prefix, pre=""):
-    """pre: SQL run first (reset links, link by a reported EIN). Then exact, exact-city and fuzzy."""
+def link(table, prefix, pre="", where="true"):
+    """pre: SQL run first (reset links, link by a reported EIN). Then exact, exact-city and fuzzy.
+    where: limits which rows are matched (e.g. "id > 123" for rows an incremental load just added)."""
     t, x = table, prefix
     _times("prepare + exact", _psql(rf"""
 \timing on
@@ -35,7 +36,7 @@ DROP TABLE IF EXISTS {x}_o, {x}_gs, {x}_r, {x}_f;
 CREATE UNLOGGED TABLE {x}_o AS SELECT ein, org_norm(name) AS n, state AS st, upper(city) AS city FROM orgs;
 CREATE INDEX ON {x}_o (st, n); CREATE INDEX ON {x}_o USING gin (st, n gin_trgm_ops); ANALYZE {x}_o;
 CREATE UNLOGGED TABLE {x}_gs AS SELECT id, org_norm(recipient_name) AS n, upper(coalesce(recipient_city, '')) AS city, recipient_state AS st
-  FROM {t} WHERE recipient_ein IS NULL AND recipient_state IN (SELECT DISTINCT st FROM {x}_o);
+  FROM {t} WHERE recipient_ein IS NULL AND ({where}) AND recipient_state IN (SELECT DISTINCT st FROM {x}_o);
 CREATE UNLOGGED TABLE {x}_r AS SELECT DISTINCT n, city, st FROM {x}_gs;
 ALTER TABLE {x}_r ADD ein char(9), ADD score real, ADD method text; ANALYZE {x}_r;
 UPDATE {x}_r r SET ein = m.ein, score = 1, method = 'exact'

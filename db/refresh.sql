@@ -20,5 +20,6 @@ REFRESH MATERIALIZED VIEW flag_year;
 -- Schedule I (042): charity_funder_profile, charity_grant_clean, charity_grant_cube (after etl/load_charity_grants.py).
 -- Concurrent refreshes (readers keep the old rows), ~1 minute. Also run after org_labels or county_need change.
 -- county_acs (043) and federal_awards (044) are plain tables: their loaders write them directly.
+-- company_foundations (045) too: re-run etl/load_company_foundations.py after new 990-PF batches load.
 SET work_mem = '512MB';
 SELECT refresh_research_layer();

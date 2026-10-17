@@ -3,6 +3,8 @@
 (matching rules: person_key(), person_middle(), person_suffix(), same-county rule for low confidence: migration 027).
 
   python3 etl/load_board.py
+  python3 etl/load_board.py --eins=FILE   # incremental: rebuild only these EINs' rows (one per line), in one
+                                          # transaction, then refresh board_interlocks concurrently
 
   nonprofits   officers and directors from each org's newest 990 / 990-EZ (filing_flag.people, from
                load_990_flag.py; staff-only roles "key" and "highest" and "former" are left out)
@@ -51,7 +53,11 @@ def main():
         if d.endswith("pf"):
             for f in os.listdir(os.path.join(XML, d)):
                 files[f.split("_")[0]] = os.path.join(XML, d, f)
+    only = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--eins=")), None)
+    keep = set(open(only).read().split()) if only else None
     funders = [l.split("|") for l in psql("SELECT ein, object_id FROM funders").split()]
+    if keep is not None:
+        funders = [f for f in funders if f[0] in keep]
     jobs = [(ein, oid, files[oid]) for ein, oid in funders if oid in files]
     print(f"{len(jobs)} of {len(funders)} foundations have their newest 990-PF on disk", flush=True)
 
@@ -64,26 +70,29 @@ def main():
     tmp.close()
     print(f"foundation board rows: {n}", flush=True)
 
-    print(psql(f"""
-TRUNCATE board_members;
-\\copy board_members (ein, object_id, tax_year, form, name, title, role, hours, pay, state) FROM '{tmp.name}' WITH (FORMAT csv, NULL '')
+    scope = f"ein IN (SELECT ein FROM only_eins)" if only else "true"
+    print(psql((f"""BEGIN;
+CREATE TEMP TABLE only_eins (ein char(9));
+\\copy only_eins FROM '{os.path.abspath(only)}'
+DELETE FROM board_members WHERE {scope};
+""" if only else "TRUNCATE board_members;\n") + f"""\\copy board_members (ein, object_id, tax_year, form, name, title, role, hours, pay, state) FROM '{tmp.name}' WITH (FORMAT csv, NULL '')
 -- nonprofits: each org's newest 990 / 990-EZ
 INSERT INTO board_members (ein, object_id, tax_year, form, name, title, role, hours, pay)
 SELECT f.ein, f.object_id, f.tax_year, f.form, p->>'name', p->>'title', nullif(p->>'role', ''),
        (p->>'hours')::real, (p->>'pay')::numeric
 FROM (SELECT DISTINCT ON (ein) ein, object_id, tax_year, form, people FROM filing_flag
-      WHERE people IS NOT NULL ORDER BY ein, tax_year DESC NULLS LAST, object_id DESC) f,
+      WHERE people IS NOT NULL AND {scope} ORDER BY ein, tax_year DESC NULLS LAST, object_id DESC) f,
      jsonb_array_elements(f.people::jsonb) p
 WHERE coalesce(p->>'role', '') NOT IN ('key', 'highest', 'former');
-UPDATE board_members SET person_key = person_key(name);
-ANALYZE board_members;
+UPDATE board_members SET person_key = person_key(name) WHERE {scope};
+""" + ("COMMIT;\n" if only else "") + f"""ANALYZE board_members;
 SELECT 'board rows: ' || count(*) || ', people matched by name: ' || count(person_key) || ', orgs: ' || count(DISTINCT ein) FROM board_members;
 """), flush=True)
     os.unlink(tmp.name)
     if "--no-refresh" not in sys.argv:
         print(psql("""
 SET work_mem = '512MB';
-REFRESH MATERIALIZED VIEW board_interlocks;
+REFRESH MATERIALIZED VIEW """ + ("CONCURRENTLY " if only else "") + """board_interlocks;
 SELECT kind || ' ' || confidence || ': ' || count(*) FROM board_interlocks GROUP BY kind, confidence ORDER BY kind, confidence;
 """), flush=True)
 

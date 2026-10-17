@@ -47,7 +47,8 @@ Also in the brief's **Data sources** tab ([`shared-database-brief.html`](shared-
 | Source | Brings | Access | Status |
 |---|---|---|---|
 | [IRS 990-PF XML: Part XV](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Every foundation grant, how to apply, deadlines | Bulk file | **Connected** |
-| [IRS 990 Schedule I](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Grants by public charities: DAF sponsors, community foundations, United Ways (3.17M grants, 2021-2025; Schedule D DAF totals) | Bulk file | **Connected** |
+| [IRS 990 Schedule I](https://www.irs.gov/charities-non-profits/form-990-series-downloads) | Grants by public charities: DAF sponsors, community foundations, United Ways (3.41M grants, 2021-2025; Schedule D DAF totals) | Bulk file | **Connected** |
+| [GivingTuesday 990 data lake](https://990data.givingtuesday.org) | Mirror of the IRS e-file XML, one file per return: fills returns the IRS zips lack (`etl/recover_missing_xml.py`) | Public S3 | **Connected** (backup) |
 | [Philanthropy News Digest](https://philanthropynewsdigest.org) | New grants and programs announced | RSS | Later |
 
 ## Public funding
@@ -132,3 +133,12 @@ Also in the brief's **Data sources** tab ([`shared-database-brief.html`](shared-
 | **Fetch on open** | ProPublica org detail | When a page opens, cached 1 day |
 
 Nightly: check each source's file date, load only new records, embed and link them, publish in one transaction, log rows added per source.
+
+**IRS e-file gaps.** The IRS index names one batch per month, but a month can ship in two zips (2025 and 2026 "05A" rows sit in 05A and 05B; 05B is never named), and some zips have a damaged central directory. After each fetch, run `python3 etl/recover_missing_xml.py` (`--dry-run` to report only). Per year it:
+1. **Zips:** reports zips `unzip` flags as damaged.
+2. **Batches:** probes the IRS server for the next letters after each month's last zip (05A → 05B, 05C ...) and fetches any it finds with `etl/fetch_990_xml.sh`.
+3. **Gaps:** lists index rows with no file: 990-PFs (every US foundation) and 990 / 990-EZ (EINs in `orgs`). A form counts only if at least half its rows are on disk, so forms never fetched for a year aren't gaps.
+4. **Mirror:** fetches the rest from the GivingTuesday data lake, 8 at a time with retries; keeps a file only if it parses and its EIN and form match the index.
+5. **Report:** writes what neither source has to `data/xml/unrecovered_<year>.csv`, and symlinks every added file into `data/xml/recovered/<year>[pf]` for the incremental loaders (`load_grants.py --add`, `load_charity_grants.py --add`, `load_990_text.py` / `load_990_flag.py` with that folder, `load_board.py --eins=`).
+
+Oct 17, 2026 run: batch 05B added 156,971 returns for 2025-2026 (Fidelity Charitable's tax year 2023 return among them). The mirror had nothing else missing; 1 return is on neither (a 2023 990-PF).

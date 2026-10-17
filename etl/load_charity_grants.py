@@ -4,6 +4,7 @@
 
   python3 etl/load_charity_grants.py [data/xml/2026 data/xml/2025 data/xml/2024 data/xml/2023]
   python3 etl/load_charity_grants.py --match-only     # relink recipients only
+  python3 etl/load_charity_grants.py --add data/xml/recovered/2025   # incremental: just these returns (see add())
 
 Reads the Form 990 e-file XML that etl/fetch_990_xml.sh extracts into data/xml/<year> (990 and 990-EZ for
 EINs in orgs; YEAR=2023 TYPES=990 etl/fetch_990_xml.sh for years loaded only for this). Only returns of type
@@ -120,9 +121,73 @@ UPDATE charity_grants SET recipient_ein = NULL, match_score = NULL, match_method
 UPDATE charity_grants c SET recipient_ein = c.reported_ein, match_score = 1, match_method = 'ein'
 FROM orgs o WHERE o.ein = c.reported_ein;""")
 
+def add(dirs):
+    """--add DIR...: load only the returns in DIR (e.g. data/xml/recovered/2025 from etl/recover_missing_xml.py).
+    A return is read only if it is the newest on disk for its (filer, tax period), as in the full load; the
+    filer's older return for that period, if loaded, is replaced. Only the added lines are linked."""
+    meta, disk = {}, {}
+    for idx in os.listdir(XML):
+        if idx.startswith("index_") and idx.endswith(".csv"):
+            for r in csv.DictReader(open(os.path.join(XML, idx), encoding="latin-1")):
+                if r["RETURN_TYPE"] == "990":
+                    meta[r["OBJECT_ID"]] = (r["EIN"].zfill(9), r["TAX_PERIOD"])
+    for d in os.listdir(XML):  # newest return per (filer, period) among everything the full load reads
+        if d.isdigit() and os.path.isdir(os.path.join(XML, d)):
+            for f in os.listdir(os.path.join(XML, d)):
+                oid = f.split("_")[0]
+                if oid in meta and (meta[oid] not in disk or oid > disk[meta[oid]]):
+                    disk[meta[oid]] = oid
+    take = {}
+    for src in dirs:
+        for f in os.listdir(src):
+            oid = f.split("_")[0]
+            if f.endswith(".xml") and oid in meta and disk.get(meta[oid]) == oid:
+                take[meta[oid]] = os.path.join(src, f)
+    keys = set(take)
+    loaded = [l.split("|") for l in psql("SELECT object_id || '|' || ein FROM charity_filers", "-At").split()]
+    replaced = [oid for oid, ein in loaded if oid in meta and meta[oid] in keys and oid != disk[meta[oid]]]
+    print(f"{len(take)} returns in {', '.join(dirs)} are the newest for their filer and period ({len(replaced)} replace a loaded return)")
+    tmp = tempfile.mkdtemp(prefix="charity-add-", dir=XML)
+    fpath, gpath, rpath = (os.path.join(tmp, f) for f in ("filers.csv", "grants.csv", "replaced.txt"))
+    n_f = n_g = bad = 0
+    with open(fpath, "w") as ff, open(gpath, "w") as gf, Pool() as pool:
+        fw, gw = csv.writer(ff, lineterminator="\n"), csv.writer(gf, lineterminator="\n")
+        for r in pool.imap_unordered(safe_parse, list(take.values()), chunksize=64):
+            if r == "bad":
+                bad += 1
+            elif r:
+                fw.writerow(r[0]); gw.writerows(r[1]); n_f += 1; n_g += len(r[1])
+    with open(rpath, "w") as f:
+        f.write("".join(o + "\n" for o in replaced))
+    after = psql("SELECT coalesce(max(id), 0) FROM charity_grants", "-At").strip()
+    out = psql(f"""BEGIN;
+CREATE TEMP TABLE replaced (object_id text);
+\\copy replaced FROM '{rpath}'
+DELETE FROM charity_grants WHERE object_id IN (SELECT object_id FROM replaced);
+DELETE FROM charity_filers WHERE object_id IN (SELECT object_id FROM replaced);
+\\copy charity_filers (object_id, ein, tax_year, name, city, state, holds_dafs, daf_count, daf_contributions, daf_grants, daf_value, grants_domestic, sched_i_rows, sched_i_usd) FROM '{fpath}' WITH (FORMAT csv, NULL '')
+\\copy charity_grants (funder_ein, object_id, tax_year, recipient_name, recipient_city, recipient_state, recipient_zip, recipient_country, reported_ein, irc_section, cash, noncash, amount, purpose, noncash_desc) FROM '{gpath}' WITH (FORMAT csv, NULL '')
+SELECT count(*) FROM charity_grants WHERE id > {after};
+COMMIT;""", "-At")
+    for p in (fpath, gpath, rpath): os.remove(p)
+    os.rmdir(tmp)
+    print(f"filers with Schedule I: {n_f} · lines parsed: {n_g} · inserted: {out.split()[-1]} · returns replaced: {len(replaced)} "
+          f"· unparseable: {bad} · new line ids > {after}")
+    link_added(int(after))
+
+def link_added(after):
+    """Link charity_grants lines with id > after: the reported EIN, then the shared name matcher."""
+    link("charity_grants", "cmadd", where=f"id > {after}", pre=f"""
+UPDATE charity_grants c SET recipient_ein = c.reported_ein, match_score = 1, match_method = 'ein'
+FROM orgs o WHERE o.ein = c.reported_ein AND c.id > {after} AND c.recipient_ein IS NULL;""")
+
 def main():
     if "--match-only" in sys.argv:
         return match()
+    if "--add" in sys.argv:
+        return add([a for a in sys.argv[1:] if not a.startswith("--")])
+    if any(a.startswith("--link-added=") for a in sys.argv):  # rerun: --link-added=<max line id before the --add load>
+        return link_added(int(next(a for a in sys.argv if a.startswith("--link-added=")).split("=")[1]))
     files = {}
     for src in SRCS:
         year = os.path.basename(os.path.normpath(src))[:4]
