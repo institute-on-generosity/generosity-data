@@ -16,3 +16,7 @@ REFRESH MATERIALIZED VIEW board_interlocks;
 REFRESH MATERIALIZED VIEW grant_clean;
 REFRESH MATERIALIZED VIEW grant_totals;
 REFRESH MATERIALIZED VIEW flag_year;
+-- Research layer (migrations 038-040): profiles, grant_cube, grant_recipient_year, grant_county_year.
+-- Concurrent refreshes (readers keep the old rows), ~1 minute. Also run after org_labels or county_need change.
+SET work_mem = '512MB';
+SELECT refresh_research_layer();
